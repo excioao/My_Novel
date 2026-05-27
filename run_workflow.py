@@ -499,14 +499,18 @@ async def main_loop(scenes: list[str]) -> None:
     km = AsyncOpenAI(api_key=KM_API_KEY, base_url=KM_BASE_URL)
     total = len(scenes)
     try:
-        for i, scene in enumerate(scenes, 1):
-            bar = "█" * i + "░" * (total - i)
-            print(f"\n{'='*50}\n[{bar}] {i}/{total}\n{'='*50}")
+        for idx, scene in enumerate(scenes):
+            # extract chapter number from scene description
+            m = re.match(r"第(\d+)章", scene)
+            ch_num = int(m.group(1)) if m else idx + 1
+            bar = "█" * (idx + 1) + "░" * (total - idx - 1) if total > 1 else "█"
+            print(f"\n{'='*50}\n[{bar}] 第{ch_num}章 / 共{total}章\n{'='*50}")
+            print("  [DeepSeek] 下发任务卡...")
             prose, retries = await run_one_scene(ds, km, scene)
-            save_chapter(i, prose, retries)
+            save_chapter(ch_num, prose, retries)
             s = "pass" if retries == 0 else f"pass(r={retries})" if retries < MAX_RETRY else f"forced({retries})"
-            print(f"  chapter {i:02d}: {s}")
-            commit_chapter(i, retries)
+            print(f"  [Kimi] 第{ch_num}章完成: {s}")
+            commit_chapter(ch_num, retries)
     finally:
         await ds.close()
         await km.close()

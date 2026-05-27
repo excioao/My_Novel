@@ -431,32 +431,34 @@ def extract_scene_label(text: str) -> str:
     return m2.group(1).strip() if m2 else f"scene_{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
 
-def append_to_vault(scene_label: str, prose: str, retries: int) -> Path:
+def save_chapter(chapter_num: int, prose: str, retries: int) -> Path:
     stamped = (
-        f"\n\n---\n## {scene_label}\n"
+        f"## 第{chapter_num}章\n"
         f"> 审计通过 / {datetime.now().strftime('%Y-%m-%d %H:%M')} / 驳回 {retries} 次\n\n"
         f"{prose}\n"
     )
-    target = VAULT / "chapter_01.md"
+    target = VAULT / f"第{chapter_num:02d}章.md"
     target.parent.mkdir(parents=True, exist_ok=True)
-    with open(target, "a", encoding="utf-8") as fh:
+    with open(target, "w", encoding="utf-8") as fh:
         fh.write(stamped)
     return target
 
 
-def silent_push() -> None:
+def commit_chapter(chapter_num: int, retries: int) -> None:
+    status = "pass" if retries == 0 else f"pass-r{retries}" if retries < MAX_RETRY else f"forced-r{retries}"
+    msg = f"feat: chapter {chapter_num:02d} generated via DeepSeek-Kimi pipeline ({status})"
     try:
         for args in [
             ["git", "config", "--local", "user.name", "Excioao"],
             ["git", "config", "--local", "user.email", "3127613845@qq.com"],
             ["git", "add", "."],
-            ["git", "commit", "-m",
-             "refactor: implement practical multiscale heuristics and chapter structure patterns into local 12 and 13 skills, upgrading python pipeline without over-hallucination"],
+            ["git", "commit", "-m", msg],
             ["git", "-c", "http.sslBackend=openssl", "push", "origin", "master"],
         ]:
             subprocess.run(args, cwd=str(ROOT), check=True, capture_output=True)
+        print(f"  [git] committed & pushed: {msg}")
     except subprocess.CalledProcessError:
-        pass
+        print(f"  [git] push failed (network), chapter saved locally")
 
 
 async def chat(client: AsyncOpenAI, model: str, system: str, prompt: str, temperature: float = 0.7) -> str:
@@ -495,18 +497,20 @@ async def run_one_scene(ds: AsyncOpenAI, km: AsyncOpenAI, scene_input: str) -> t
 async def main_loop(scenes: list[str]) -> None:
     ds = AsyncOpenAI(api_key=DS_API_KEY, base_url=DS_BASE_URL)
     km = AsyncOpenAI(api_key=KM_API_KEY, base_url=KM_BASE_URL)
+    total = len(scenes)
     try:
         for i, scene in enumerate(scenes, 1):
+            bar = "█" * i + "░" * (total - i)
+            print(f"\n{'='*50}\n[{bar}] {i}/{total}\n{'='*50}")
             prose, retries = await run_one_scene(ds, km, scene)
-            label = f"{i:02d}_{extract_scene_label(prose) if prose else 'error'}"
-            append_to_vault(label, prose, retries)
+            save_chapter(i, prose, retries)
             s = "pass" if retries == 0 else f"pass(r={retries})" if retries < MAX_RETRY else f"forced({retries})"
-            print(f"scene {i}: {s}")
+            print(f"  chapter {i:02d}: {s}")
+            commit_chapter(i, retries)
     finally:
         await ds.close()
         await km.close()
-    silent_push()
-    print("done")
+    print(f"\n{'='*50}\n[{'█'*total}] {total}/{total} done")
 
 
 def main():

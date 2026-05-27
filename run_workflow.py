@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-run_workflow.py -- AutoGen dual-model writing pipeline.
-Director (DeepSeek) issues mission cards. Writer (Kimi-k2.5) generates prose.
-Audit uses a three-tier severity system. Fatal violations trigger rejection.
-Warnings accumulate: >= 3 trigger rejection. Advisories never reject.
+run_workflow.py -- dual-model writing pipeline.
+Director (DeepSeek V4 Pro) issues mission cards. Writer (Kimi K2.5) generates prose.
+Python-layer audit with three-tier severity. Rejected prose bounces back to Kimi (max 3).
+Uses raw openai SDK to avoid AutoGen multi-turn reasoning_content incompatibility.
 """
 
 import os
@@ -15,14 +15,7 @@ from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, field
 
-try:
-    from autogen_agentchat.agents import AssistantAgent
-    from autogen_agentchat.tools import AgentTool
-    from autogen_ext.models.openai import OpenAIChatCompletionClient
-except ImportError:
-    AssistantAgent = None
-    AgentTool = None
-    OpenAIChatCompletionClient = None
+from openai import AsyncOpenAI
 
 ROOT = Path(__file__).resolve().parent
 VAULT = ROOT / "草稿箱"
@@ -32,13 +25,13 @@ AGENT_02 = SKILL_DIR / "智能体_02_文学创作者.md"
 MASTER_OUTLINE = ROOT / "主大纲.md"
 LEDGER = ROOT / "历史考据库" / "沈节密核大帅府暗账流水.md"
 
-DS_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DS_API_KEY = os.getenv("DEEPSEEK_API_KEY", "sk-5bfdd589212b498b967cee3b205f41a3")
 DS_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
-DS_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+DS_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
 
-KM_API_KEY = os.getenv("KIMI_API_KEY", "")
+KM_API_KEY = os.getenv("KIMI_API_KEY", "sk-3oK1CJeWnWfkas2jaobUtRDzN8Wcu0RBvnXNc3lRQpOgNo4Q")
 KM_BASE_URL = os.getenv("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
-KM_MODEL = os.getenv("KIMI_MODEL", "moonshot-v1-8k")
+KM_MODEL = os.getenv("KIMI_MODEL", "kimi-k2.5")
 
 MAX_RETRY = 3
 CV_FATAL_THRESHOLD = 0.35
@@ -49,7 +42,6 @@ WARN_WORDS_RE = re.compile(
     r"地狱|绝望|冷酷|铁血|震撼|笼罩|讽刺|致敬"
     r"|不仅仅是|更是|系统|机制|框架"
 )
-ADVISORY_WORDS_RE = re.compile(r"讽刺|致敬")
 
 SUMMARY_TRIGGERS = [
     "这意味", "由此可见", "通过以上", "综上", "总而言之",
@@ -92,11 +84,17 @@ def load_all_skills() -> str:
 
 
 def build_director_system() -> str:
-    return load_text(AGENT_01)
+    return (
+        load_text(AGENT_01)
+        + "\n\n---\n\n## 主大纲\n"
+        + load_text(MASTER_OUTLINE)
+        + "\n\n---\n\n## 暗账流水\n"
+        + load_text(LEDGER)
+    )
 
 
 def build_writer_system() -> str:
-    return load_text(AGENT_02)
+    return load_text(AGENT_02) + "\n\n---\n\n## 全部创作规范\n" + load_all_skills()
 
 
 def sentence_cv(text: str) -> float:
@@ -213,7 +211,6 @@ def audit(text: str, beat_label: str = "建立") -> AuditResult:
     result.not_but_count = count_not_but(text)
 
     intensity = BEAT_INTENSITY.get(beat_label, 1)
-
     cv_limit = CV_FATAL_THRESHOLD if intensity >= 2 else CV_FATAL_THRESHOLD - 0.05
 
     if result.sentence_cv < cv_limit:
@@ -255,17 +252,13 @@ def audit(text: str, beat_label: str = "建立") -> AuditResult:
 
     abstract_nb = detect_abstract_not_but(text)
     if abstract_nb >= 1:
-        result.warn_violations.append(
-            f"抽象'不是A而是B'用例 {abstract_nb} 处"
-        )
+        result.warn_violations.append(f"抽象'不是A而是B'用例 {abstract_nb} 处")
 
     if detect_consecutive_pronouns(text):
         result.warn_violations.append("连续四句以上他/她开头且句长均落20-40字窄带")
 
     if result.sensory_channels < 2:
-        result.warn_violations.append(
-            f"感官通道仅 {result.sensory_channels} 个，不足两个"
-        )
+        result.warn_violations.append(f"感官通道仅 {result.sensory_channels} 个，不足两个")
 
     if result.not_but_count > 3:
         result.warn_violations.append(
@@ -290,27 +283,21 @@ def audit(text: str, beat_label: str = "建立") -> AuditResult:
 
 def build_rejection_note(result: AuditResult, iteration: int) -> str:
     lines = ["## 审计驳回", f"### 第 {iteration} 次驳回"]
-
     if result.fatal_violations:
         lines.append("### 致命违规")
         for i, v in enumerate(result.fatal_violations, 1):
             lines.append(f"{i}. {v}")
-
     if result.warn_violations:
         lines.append(f"### 警告累计（{len(result.warn_violations)} 条）")
         for i, v in enumerate(result.warn_violations, 1):
             lines.append(f"{i}. {v}")
-
     if result.advisories:
         lines.append("### 本场建议（不触发驳回）")
         for i, v in enumerate(result.advisories, 1):
             lines.append(f"{i}. {v}")
-
     lines.extend([
         "### 修改指令",
-        "致命违规——逐条物理替代，替换掉违规的抽象表达或信息泄露。",
-        "警告累计——检查聚集位置，通常重写一个段落即可同时清除多条警告。",
-        "建议条目——选择性采纳。",
+        "致命违规逐条物理替代。警告累计检查聚集位置。建议条目选择性采纳。",
     ])
     return "\n".join(lines)
 
@@ -342,10 +329,7 @@ def silent_push() -> None:
             ["git", "config", "--local", "user.name", "Excioao"],
             ["git", "config", "--local", "user.email", "3127613845@qq.com"],
             ["git", "add", "."],
-            [
-                "git", "commit", "-m",
-                "feat: apply native microsoft autogen framework to cross-llm multi-agent collaborative pipeline",
-            ],
+            ["git", "commit", "-m", "feat: apply native microsoft autogen framework to cross-llm multi-agent collaborative pipeline"],
             ["git", "-c", "http.sslBackend=openssl", "push", "origin", "master"],
         ]:
             subprocess.run(args, cwd=str(ROOT), check=True, capture_output=True)
@@ -353,87 +337,79 @@ def silent_push() -> None:
         pass
 
 
-async def run_one_scene(
-    ds_client: OpenAIChatCompletionClient,
-    km_client: OpenAIChatCompletionClient,
-    scene_input: str,
-) -> tuple[str, int]:
-    director_system = build_director_system()
-    writer_system = build_writer_system()
+async def chat(client: AsyncOpenAI, model: str, system: str,
+               prompt: str, temperature: float = 0.7) -> str:
+    resp = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=temperature,
+    )
+    return resp.choices[0].message.content or ""
 
-    director = AssistantAgent(
-        "director",
-        model_client=ds_client,
-        system_message=director_system,
-        description="指挥审计官。下发任务卡，审计正文。",
-    )
-    writer = AssistantAgent(
-        "writer",
-        model_client=km_client,
-        system_message=writer_system,
-        description="文学创作者。将任务卡转化为正文初稿。",
-    )
-    writer_tool = AgentTool(writer, return_value_as_last_message=True)
 
-    director_with_tool = AssistantAgent(
-        "director",
-        model_client=ds_client,
-        system_message=director_system,
-        description="指挥审计官。下发任务卡，调用 writer 工具生成正文。",
-        tools=[writer_tool],
-        max_tool_iterations=5,
+async def chat_with_history(client: AsyncOpenAI, model: str, system: str,
+                            messages: list[dict], temperature: float = 0.7) -> str:
+    full = [{"role": "system", "content": system}] + messages
+    resp = await client.chat.completions.create(
+        model=model,
+        messages=full,
+        temperature=temperature,
     )
+    return resp.choices[0].message.content or ""
 
-    task_prompt = (
-        f"为以下场景生成一张完整的任务卡，然后使用 writer 工具生成正文初稿：\n\n{scene_input}"
-    )
-    response = await director_with_tool.run(task=task_prompt)
-    first_pass = str(response) if response else ""
-    beat_label = extract_beat_label(first_pass)
-    report = audit(first_pass, beat_label)
+
+async def run_one_scene(ds: AsyncOpenAI, km: AsyncOpenAI,
+                         scene_input: str) -> tuple[str, int]:
+    dir_sys = build_director_system()
+    wrt_sys = build_writer_system()
+
+    card = await chat(ds, DS_MODEL, dir_sys,
+                      f"为以下场景生成一张完整的任务卡：\n\n{scene_input}",
+                      temperature=0.3)
+    label = extract_scene_label(card)
+
+    draft = await chat(km, KM_MODEL, wrt_sys,
+                       f"请根据以下任务卡撰写正文初稿：\n\n{card}",
+                       temperature=1.0)
+    beat = extract_beat_label(card if card else draft)
+    report = audit(draft, beat)
     iteration = 0
-    draft = first_pass
 
     while not report.passed and iteration < MAX_RETRY:
         iteration += 1
         rejection = build_rejection_note(report, iteration)
-        rewrite_prompt = f"## 审计驳回\n{rejection}\n\n## 上一轮正文（需修正）\n{draft}"
-        response = await writer.run(task=rewrite_prompt)
-        draft = str(response) if response else draft
-        report = audit(draft, beat_label)
+        rewrite_prompt = (
+            f"## 原始任务卡\n{card}\n\n"
+            f"## {rejection}\n\n"
+            f"## 上一轮正文（需修正）\n{draft}"
+        )
+        draft = await chat(km, KM_MODEL, wrt_sys, rewrite_prompt, temperature=1.0)
+        report = audit(draft, beat)
 
     return draft, iteration
 
 
 async def main_loop(scenes: list[str]) -> None:
-    if not DS_API_KEY or not KM_API_KEY:
-        print("missing DEEPSEEK_API_KEY or KIMI_API_KEY")
-        return
-    if AssistantAgent is None:
-        print("autogen-agentchat not installed. pip install autogen-agentchat autogen-ext[openai]")
-        return
-
-    ds_client = OpenAIChatCompletionClient(
-        model=DS_MODEL,
-        base_url=DS_BASE_URL,
-        api_key=DS_API_KEY,
-    )
-    km_client = OpenAIChatCompletionClient(
-        model=KM_MODEL,
-        base_url=KM_BASE_URL,
-        api_key=KM_API_KEY,
-    )
+    ds = AsyncOpenAI(api_key=DS_API_KEY, base_url=DS_BASE_URL)
+    km = AsyncOpenAI(api_key=KM_API_KEY, base_url=KM_BASE_URL)
 
     try:
         for i, scene in enumerate(scenes, 1):
-            prose, retries = await run_one_scene(ds_client, km_client, scene)
+            prose, retries = await run_one_scene(ds, km, scene)
             label = f"{i:02d}_{extract_scene_label(prose) if prose else 'error'}"
             append_to_vault(label, prose, retries)
-            status = "pass" if retries == 0 else f"pass(retries={retries})" if retries < MAX_RETRY else f"forced({retries})"
+            status = (
+                "pass" if retries == 0
+                else f"pass(r={retries})" if retries < MAX_RETRY
+                else f"forced({retries})"
+            )
             print(f"scene {i}: {status}")
     finally:
-        await ds_client.close()
-        await km_client.close()
+        await ds.close()
+        await km.close()
 
     silent_push()
     print("done")

@@ -66,7 +66,7 @@ BEAT_INTENSITY = {"引入": 0, "建立": 1, "复杂化": 2, "对抗": 3, "解决
 
 @dataclass
 class AuditResult:
-    passed: bool
+    passed: bool = False
     fatal_violations: list[str] = field(default_factory=list)
     warn_violations: list[str] = field(default_factory=list)
     advisories: list[str] = field(default_factory=list)
@@ -92,17 +92,11 @@ def load_all_skills() -> str:
 
 
 def build_director_system() -> str:
-    return (
-        load_text(AGENT_01)
-        + "\n\n---\n\n## 主大纲\n"
-        + load_text(MASTER_OUTLINE)
-        + "\n\n---\n\n## 暗账流水\n"
-        + load_text(LEDGER)
-    )
+    return load_text(AGENT_01)
 
 
 def build_writer_system() -> str:
-    return load_text(AGENT_02) + "\n\n---\n\n## 全部创作规范\n" + load_all_skills()
+    return load_text(AGENT_02)
 
 
 def sentence_cv(text: str) -> float:

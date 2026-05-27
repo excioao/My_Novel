@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""小说角色塑形访谈 —— 终端交互式问卷，回答完毕后自动追加到 character_database.md。"""
+"""小说角色塑形访谈 —— 终端交互式问卷，回答完毕后自动追加到 人物档案库.md。"""
 
 import os
 import sys
@@ -82,7 +82,7 @@ SECTION_ORDER = [
     "欲望与弧光", "作者速写",
 ]
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "character_database.md")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "人物档案库.md")
 
 
 def run_interview() -> list[tuple[str, str, str]]:
@@ -143,7 +143,7 @@ def append_to_database(markdown: str) -> None:
 def main() -> None:
     os.system("cls" if os.name == "nt" else "clear")
 
-    print("请输入角色姓名（用于在 character_database.md 中创建二级标题）：")
+    print("请输入角色姓名（用于在 人物档案库.md 中创建二级标题）：")
     role_name = input("> ").strip()
     if not role_name:
         role_name = "未命名角色"
@@ -157,7 +157,7 @@ def main() -> None:
     print("\n生成的角色档案预览：\n")
     print(markdown)
 
-    print("\n是否将以上内容追加保存到 character_database.md？(y/n)")
+    print("\n是否将以上内容追加保存到 人物档案库.md？(y/n)")
     confirm = input("> ").strip().lower()
     if confirm in ("y", "yes", "是", ""):
         append_to_database(markdown)

@@ -27,6 +27,7 @@ SKILL_13 = SKILL_DIR / "13_章节结构与连载节奏规范.md"
 SKILL_00 = SKILL_DIR / "00_顶级历史小说语感与审美总纲.md"
 SKILL_14 = SKILL_DIR / "14_唯物主义情感互动规范.md"
 SKILL_15 = SKILL_DIR / "15_张力制造去模板化规范.md"
+SKILL_16 = SKILL_DIR / "16_章节级张弛节奏与呼吸章规范.md"
 MASTER_OUTLINE = ROOT / "主大纲.md"
 LEDGER = ROOT / "历史考据库" / "沈节密核大帅府暗账流水.md"
 
@@ -131,6 +132,7 @@ def build_director_system() -> str:
         + load_text(SKILL_12) + "\n\n---\n\n" + load_text(SKILL_13)
         + "\n\n---\n\n## 情感互动规范\n" + load_text(SKILL_14)
         + "\n\n---\n\n## 张力制造去模板化\n" + load_text(SKILL_15)
+        + "\n\n---\n\n## 章节张弛节奏\n" + load_text(SKILL_16)
     )
 
 
@@ -146,6 +148,7 @@ def build_writer_system() -> str:
         + load_text(SKILL_12) + "\n\n---\n\n" + load_text(SKILL_13)
         + "\n\n---\n\n## 情感互动规范\n" + load_text(SKILL_14)
         + "\n\n---\n\n## 张力制造去模板化\n" + load_text(SKILL_15)
+        + "\n\n---\n\n## 章节张弛节奏\n" + load_text(SKILL_16)
     )
 
 

@@ -17,9 +17,11 @@
     "editor.cursorBlinking": "smooth",
     "editor.cursorSmoothCaretAnimation": "on",
     "editor.smoothScrolling": true,
-    "editor.fontSize": 17,
-    "editor.lineHeight": 30,
-    "editor.fontFamily": "'更纱黑体 SC', 'Noto Serif CJK SC', 'Source Han Serif SC', 'SimSun', serif",
+    "editor.fontSize": 16,
+    "editor.lineHeight": 28,
+    "editor.fontFamily": "'JetBrains Mono', 'LXGW WenKai', 'Source Han Serif SC', 'Songti SC', 'FangSong', 'Microsoft YaHei', sans-serif",
+    "editor.fontLigatures": true,
+    "editor.fontWeight": "normal",
     "workbench.colorCustomizations": {
         "[Gotham]": {
             "editor.background": "#0a0b10",

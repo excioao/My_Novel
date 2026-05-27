@@ -462,23 +462,45 @@ def commit_chapter(chapter_num: int, retries: int) -> None:
         print(f"  [git] push failed (network), chapter saved locally")
 
 
-async def chat(client: AsyncOpenAI, model: str, system: str, prompt: str, temperature: float = 0.7) -> str:
-    resp = await client.chat.completions.create(
+async def chat(client: AsyncOpenAI, model: str, system: str, prompt: str, temperature: float = 0.7,
+                label: str = "generating") -> str:
+    """Streaming chat with progress display."""
+    stream = await client.chat.completions.create(
         model=model,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
         temperature=temperature,
+        stream=True,
     )
-    return resp.choices[0].message.content or ""
+    chunks = []
+    char_count = 0
+    last_report = 0
+    async for chunk in stream:
+        if chunk.choices and chunk.choices[0].delta.content:
+            text = chunk.choices[0].delta.content
+            chunks.append(text)
+            char_count += len(text)
+            if char_count - last_report >= 200:
+                print(f"  [{label}] {char_count} 字...", end="\r")
+                last_report = char_count
+    result = "".join(chunks)
+    print(f"  [{label}] {char_count} 字，完成" + " " * 20)
+    return result
 
 
-async def run_one_scene(ds: AsyncOpenAI, km: AsyncOpenAI, scene_input: str) -> tuple[str, int]:
+async def run_one_scene(ds: AsyncOpenAI, km: AsyncOpenAI, scene_input: str,
+                         ch_label: str = "") -> tuple[str, int]:
     dir_sys = build_director_system()
     wrt_sys = build_writer_system()
 
+    print(f"  [DeepSeek] 任务卡生成中...")
     card = await chat(ds, DS_MODEL, dir_sys,
-                      f"为以下场景生成一张完整的任务卡：\n\n{scene_input}", temperature=0.3)
+                      f"为以下场景生成一张完整的任务卡：\n\n{scene_input}",
+                      temperature=0.3, label="任务卡")
+
+    print(f"  [Kimi] 初稿写作中...")
     draft = await chat(km, KM_MODEL, wrt_sys,
-                       f"请根据以下任务卡撰写正文初稿：\n\n{card}", temperature=1.0)
+                       f"请根据以下任务卡撰写正文初稿：\n\n{card}",
+                       temperature=1.0, label=f"第1稿 {ch_label}")
     beat = extract_beat_label(card if card else draft)
     report = audit(draft, beat, retry_round=0)
     iteration = 0
@@ -489,7 +511,9 @@ async def run_one_scene(ds: AsyncOpenAI, km: AsyncOpenAI, scene_input: str) -> t
         rewrite_prompt = (
             f"## 原始任务卡\n{card}\n\n## {rejection}\n\n## 上一轮正文（需修正）\n{draft}"
         )
-        draft = await chat(km, KM_MODEL, wrt_sys, rewrite_prompt, temperature=1.0)
+        print(f"  [审计] 驳回 {iteration}/{MAX_RETRY}，踢回 Kimi 重写...")
+        draft = await chat(km, KM_MODEL, wrt_sys, rewrite_prompt,
+                           temperature=1.0, label=f"第{iteration+1}稿 {ch_label}")
         report = audit(draft, beat, retry_round=iteration)
 
     return draft, iteration
@@ -507,8 +531,7 @@ async def main_loop(scenes: list[str]) -> None:
             ch_title = m.group(2).strip()[:6] if m and m.group(2) else f"第{ch_num}章"
             bar = "█" * (idx + 1) + "░" * (total - idx - 1) if total > 1 else "█"
             print(f"\n{'='*50}\n[{bar}] 第{ch_num}章 {ch_title} / 共{total}章\n{'='*50}")
-            print("  [DeepSeek] 下发任务卡...")
-            prose, retries = await run_one_scene(ds, km, scene)
+            prose, retries = await run_one_scene(ds, km, scene, ch_label=f"第{ch_num}章")
             save_chapter(ch_num, ch_title, prose, retries)
             s = "pass" if retries == 0 else f"pass(r={retries})" if retries < MAX_RETRY else f"forced({retries})"
             print(f"  [Kimi] 第{ch_num}章完成: {s}")

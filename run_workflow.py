@@ -2,8 +2,8 @@
 """
 run_workflow.py -- dual-model writing pipeline.
 Director (DeepSeek V4 Pro) issues mission cards. Writer (Kimi K2.5) generates prose.
-Python-layer audit with three-tier severity. Rejected prose bounces back to Kimi (max 3).
-Uses raw openai SDK to avoid AutoGen multi-turn reasoning_content incompatibility.
+Python-layer audit with multiscale word-chain sniffing, format-fingerprint cleaning,
+dynamic threshold adjustment, chapter word-count enforcement, and hook validation.
 """
 
 import os
@@ -22,6 +22,8 @@ VAULT = ROOT / "草稿箱"
 SKILL_DIR = ROOT / "小说创作技巧库"
 AGENT_01 = SKILL_DIR / "智能体_01_指挥审计官.md"
 AGENT_02 = SKILL_DIR / "智能体_02_文学创作者.md"
+SKILL_12 = SKILL_DIR / "12_多尺度文本特征指纹拦截.md"
+SKILL_13 = SKILL_DIR / "13_章节结构与连载节奏规范.md"
 MASTER_OUTLINE = ROOT / "主大纲.md"
 LEDGER = ROOT / "历史考据库" / "沈节密核大帅府暗账流水.md"
 
@@ -34,26 +36,47 @@ KM_BASE_URL = os.getenv("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
 KM_MODEL = os.getenv("KIMI_MODEL", "kimi-k2.5")
 
 MAX_RETRY = 3
-CV_FATAL_THRESHOLD = 0.35
-CV_WARN_THRESHOLD = 0.60
+BASE_CV_THRESHOLD = 0.60
+BASE_NGRAM_LIMIT = 3
+BASE_NUMERIC_MIN = 2
 
-FATAL_WORDS_RE = re.compile(r"赋能|抓手|闭环|对齐|拉通|打通|链路|颗粒度|维度|底层逻辑")
-WARN_WORDS_RE = re.compile(
-    r"地狱|绝望|冷酷|铁血|震撼|笼罩|讽刺|致敬"
-    r"|不仅仅是|更是|系统|机制|框架"
-)
-
-SUMMARY_TRIGGERS = [
-    "这意味", "由此可见", "通过以上", "综上", "总而言之",
-    "一句话总结", "到这里", "说明了", "告诉我们", "启示",
+NGRAM_BLACKLIST = [
+    "不仅仅是", "更是要", "可以说", "可谓是", "不难看", "不难发", "由此可", "通过以", "综上所",
+    "不仅仅是更", "拉开了序幕", "见证了历史", "在这片土地", "不可否认的", "显而易见的",
+    "值得注意的", "深入探讨了", "不仅仅是更是", "拉开了新序幕", "见证了这一历",
+    "在这片土地上", "不可否认的是", "显而易见的是", "不仅仅是更是对", "拉开了全新序幕",
+    "见证了这一历史", "在这片古老土地上", "赋能", "抓手", "闭环", "对齐", "拉通",
+    "打通", "链路", "颗粒度", "维度", "底层逻辑",
 ]
+
+FORMAT_PREAMBLE_RE = re.compile(r"^(好的[，,]|明白了[，,]|让我来写|以下是根据|为您创作)")
+FORMAT_PAREN_RE = re.compile(r"[（(][^）)]{3,}[）)]")
+FORMAT_SUMMARY_TAIL_TRIGGERS = [
+    "这意味", "由此可见", "综上", "总而言之", "通过以上", "到这里", "说明了", "启示", "告诉我们",
+]
+FORMAT_ENUMERATION_RE = re.compile(r"(首先.{0,30})(其次.{0,30})(最后.{0,30})")
+
+HOOK_FORBIDDEN = [
+    "他不知道的是", "这一刻的变化", "暗流正在涌动", "命运的齿轮",
+    "不久后", "仅仅是开始", "正是这种力量", "在这片大地上",
+    "历史的长河", "时代的洪流", "谁又能想到", "谁又能说得清",
+    "又有谁能", "何曾想过", "生活就是这样", "人这一生", "有些路", "有些事",
+    "夜色依旧", "风还在吹", "月光洒在", "大雪仍然", "天地间一片",
+    "这意味", "由此可见", "综上", "总而言之", "通过以上分析",
+]
+
+BEAT_INTENSITY = {"引入": 0, "建立": 1, "复杂化": 2, "对抗": 3, "解决": 0}
 
 ABSTRACT_MARKERS = [
     "正义", "邪恶", "命运", "宿命", "绝望", "希望",
     "信仰", "背叛", "忠诚", "权力", "救赎", "毁灭",
 ]
 
-BEAT_INTENSITY = {"引入": 0, "建立": 1, "复杂化": 2, "对抗": 3, "解决": 0}
+FATAL_WORDS_RE = re.compile(r"赋能|抓手|闭环|对齐|拉通|打通|链路|颗粒度|维度|底层逻辑")
+WARN_WORDS_RE = re.compile(
+    r"地狱|绝望|冷酷|铁血|震撼|笼罩|讽刺|致敬"
+    r"|不仅仅是|更是|系统|机制|框架"
+)
 
 
 @dataclass
@@ -67,7 +90,10 @@ class AuditResult:
     sensory_channels: int = 0
     em_dash_count: int = 0
     not_but_count: int = 0
+    ngram_hits: int = 0
     forbidden_hits: dict[str, int] = field(default_factory=dict)
+    format_fingerprints: list[str] = field(default_factory=list)
+    chapter_word_count: int = 0
 
 
 def load_text(path: Path) -> str:
@@ -86,15 +112,20 @@ def load_all_skills() -> str:
 def build_director_system() -> str:
     return (
         load_text(AGENT_01)
-        + "\n\n---\n\n## 主大纲\n"
-        + load_text(MASTER_OUTLINE)
-        + "\n\n---\n\n## 暗账流水\n"
-        + load_text(LEDGER)
+        + "\n\n---\n\n## 主大纲\n" + load_text(MASTER_OUTLINE)
+        + "\n\n---\n\n## 暗账流水\n" + load_text(LEDGER)
+        + "\n\n---\n\n## 指纹拦截与章节规范\n"
+        + load_text(SKILL_12) + "\n\n---\n\n" + load_text(SKILL_13)
     )
 
 
 def build_writer_system() -> str:
-    return load_text(AGENT_02) + "\n\n---\n\n## 全部创作规范\n" + load_all_skills()
+    return (
+        load_text(AGENT_02)
+        + "\n\n---\n\n## 全部创作规范\n" + load_all_skills()
+        + "\n\n---\n\n## 指纹拦截与章节规范\n"
+        + load_text(SKILL_12) + "\n\n---\n\n" + load_text(SKILL_13)
+    )
 
 
 def sentence_cv(text: str) -> float:
@@ -115,16 +146,11 @@ def extract_beat_label(text: str) -> str:
 
 def count_sensory_channels(text: str) -> int:
     channels = 0
-    if re.search(r"看|望|盯|注视|目光|视|色|光|暗|亮|漆黑|白茫", text):
-        channels += 1
-    if re.search(r"听|声|响|鸣|吱|闷|低|吼|喊|说|道|问|答", text):
-        channels += 1
-    if re.search(r"冷|热|暖|冻|冰|凉|烫|温|麻|刺|痛|痒|触|摸|碰|摁|按|握|抓", text):
-        channels += 1
-    if re.search(r"闻|臭|腥|锈|霉|焦|熏|膻|酸|苦", text):
-        channels += 1
-    if re.search(r"温度|寒冷|寒风|风雪|冻土|冰壳|冰柱|零下", text):
-        channels += 1
+    if re.search(r"看|望|盯|注视|目光|视|色|光|暗|亮|漆黑|白茫", text): channels += 1
+    if re.search(r"听|声|响|鸣|吱|闷|低|吼|喊|说|道|问|答", text): channels += 1
+    if re.search(r"冷|热|暖|冻|冰|凉|烫|温|麻|刺|痛|痒|触|摸|碰|摁|按|握|抓", text): channels += 1
+    if re.search(r"闻|臭|腥|锈|霉|焦|熏|膻|酸|苦", text): channels += 1
+    if re.search(r"温度|寒冷|寒风|风雪|冻土|冰壳|冰柱|零下", text): channels += 1
     return channels
 
 
@@ -138,15 +164,11 @@ def count_em_dash(text: str) -> int:
 
 def detect_pov_breach(text: str) -> list[str]:
     breaches = []
-    patterns = [
-        r"他知道.{0,30}意味",
-        r"她意识到.{0,30}命运",
-        r"他隐隐感觉到",
-        r"他后来会知道",
-        r"命运似乎在暗示",
+    for p in [
+        r"他知道.{0,30}意味", r"她意识到.{0,30}命运",
+        r"他隐隐感觉到", r"他后来会知道", r"命运似乎在暗示",
         r"仿佛.{0,10}在告诉他",
-    ]
-    for p in patterns:
+    ]:
         m = re.search(p, text)
         if m:
             breaches.append(f"POV盲区跨越: {m.group()[:40]}")
@@ -168,9 +190,8 @@ def detect_consecutive_pronouns(text: str) -> bool:
 
 def detect_abstract_not_but(text: str) -> int:
     pattern = re.compile(r"不是.{0,20}而是.{0,50}")
-    matches = pattern.findall(text)
     abstract_count = 0
-    for m in matches:
+    for m in pattern.findall(text):
         if sum(1 for w in ABSTRACT_MARKERS if w in m) >= 2:
             abstract_count += 1
     return abstract_count
@@ -180,7 +201,7 @@ def detect_summary_tails(text: str) -> int:
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     count = 0
     for p in paragraphs[-2:]:
-        if any(t in p for t in SUMMARY_TRIGGERS):
+        if any(t in p for t in FORMAT_SUMMARY_TAIL_TRIGGERS):
             count += 1
     return count
 
@@ -196,44 +217,118 @@ def count_numerics(text: str) -> int:
     return total
 
 
-def count_words(text: str) -> int:
+def count_chapter_words(text: str) -> int:
     return len(re.findall(r"[一-鿿]", text)) + len(re.findall(r"[a-zA-Z]+", text))
 
 
-def audit(text: str, beat_label: str = "建立") -> AuditResult:
-    word_count = max(count_words(text), 1)
-    kilo_words = word_count / 1000.0
+def scan_ngrams(text: str) -> tuple[int, list[str]]:
+    hits = []
+    total = 0
+    for phrase in NGRAM_BLACKLIST:
+        count = text.count(phrase)
+        if count > 0:
+            hits.append(f"'{phrase}' x{count}")
+            total += count
+    return total, hits
+
+
+def scan_format_fingerprints(text: str) -> list[str]:
+    fps = []
+    if FORMAT_PREAMBLE_RE.match(text.lstrip()):
+        fps.append("前置客套话: 首段以AI默认开场白开头")
+    parens = FORMAT_PAREN_RE.findall(text)
+    if parens:
+        fps.append(f"括号内剧本式批注: {len(parens)} 处 → {parens[:2]}")
+    if FORMAT_ENUMERATION_RE.search(text):
+        fps.append("首先-其次-最后三段式分点陈列")
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    if paragraphs:
+        last = paragraphs[-1]
+        for t in FORMAT_SUMMARY_TAIL_TRIGGERS:
+            if t in last:
+                fps.append(f"后置总结尾音: 末段含'{t}'")
+                break
+    return fps
+
+
+def detect_chapter_end_hook(text: str) -> tuple[bool, str]:
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    if len(paragraphs) < 2:
+        return False, "段落数不足，无法检测钩子"
+    last = paragraphs[-1]
+    for h in HOOK_FORBIDDEN:
+        if h in last:
+            return False, f"章末钩子含禁用句式: '{h}'"
+    if len(last) < 15:
+        return False, f"章末钩子过短 ({len(last)} 字)"
+    if len(last) > 200:
+        return False, f"章末钩子过长 ({len(last)} 字)"
+    return True, "ok"
+
+
+def get_dynamic_thresholds(retry_round: int) -> tuple[float, int, int]:
+    if retry_round == 0:
+        return BASE_CV_THRESHOLD, BASE_NGRAM_LIMIT, BASE_NUMERIC_MIN
+    elif retry_round == 1:
+        return 0.70, 2, 3
+    elif retry_round == 2:
+        return 0.80, 1, 4
+    else:
+        return 0.80, 1, 4
+
+
+def audit(text: str, beat_label: str = "建立", retry_round: int = 0) -> AuditResult:
+    cv_limit, ngram_limit, numeric_min = get_dynamic_thresholds(retry_round)
+    kilo_words = max(count_chapter_words(text), 1) / 1000.0
+
     result = AuditResult()
     result.sentence_cv = sentence_cv(text)
     result.numeric_count = count_numerics(text)
     result.sensory_channels = count_sensory_channels(text)
     result.em_dash_count = count_em_dash(text)
     result.not_but_count = count_not_but(text)
+    result.chapter_word_count = count_chapter_words(text)
+    result.ngram_hits, ngram_details = scan_ngrams(text)
+    result.format_fingerprints = scan_format_fingerprints(text)
 
     intensity = BEAT_INTENSITY.get(beat_label, 1)
-    cv_limit = CV_FATAL_THRESHOLD if intensity >= 2 else CV_FATAL_THRESHOLD - 0.05
 
     if result.sentence_cv < cv_limit:
         result.fatal_violations.append(
-            f"句长变异系数 {result.sentence_cv:.2f} 低于致命阈值 {cv_limit}"
-        )
-    elif result.sentence_cv < CV_WARN_THRESHOLD and intensity >= 2:
-        result.warn_violations.append(
-            f"句长变异系数 {result.sentence_cv:.2f} 低于警告阈值 {CV_WARN_THRESHOLD}（高密度节拍）"
+            f"句长变异系数 {result.sentence_cv:.2f} 低于动态阈值 {cv_limit}（驳回轮次={retry_round}）"
         )
 
-    pov_breaches = detect_pov_breach(text)
-    for b in pov_breaches:
+    for b in detect_pov_breach(text):
         result.fatal_violations.append(b)
 
-    if result.numeric_count == 0:
-        result.fatal_violations.append("数目字为零，本场景完全没有可核验物理量")
+    if result.numeric_count < numeric_min:
+        result.fatal_violations.append(
+            f"数目字 {result.numeric_count} 个，低于动态下限 {numeric_min}"
+        )
+
+    cw = result.chapter_word_count
+    if cw < 2500:
+        result.fatal_violations.append(f"章节字数 {cw} 低于绝对下限 2500")
+    elif cw > 3800:
+        result.fatal_violations.append(f"章节字数 {cw} 超过绝对上限 3800")
 
     fatal_word_hits = FATAL_WORDS_RE.findall(text)
     if fatal_word_hits:
-        result.fatal_violations.append(
-            f"致命禁词命中: {', '.join(set(fatal_word_hits))}"
+        result.fatal_violations.append(f"致命禁词: {', '.join(set(fatal_word_hits))}")
+
+    if result.ngram_hits / kilo_words > ngram_limit:
+        result.warn_violations.append(
+            f"词链密度 {result.ngram_hits / kilo_words:.1f}/千字，超动态上限 {ngram_limit}"
+            f"（命中 {result.ngram_hits} 处: {ngram_details[:5]}）"
         )
+
+    if result.format_fingerprints:
+        for fp in result.format_fingerprints:
+            result.warn_violations.append(f"格式指纹: {fp}")
+
+    hook_ok, hook_msg = detect_chapter_end_hook(text)
+    if not hook_ok:
+        result.warn_violations.append(f"章末钩子: {hook_msg}")
 
     warn_words = WARN_WORDS_RE.findall(text)
     warn_freq = {}
@@ -242,38 +337,28 @@ def audit(text: str, beat_label: str = "建立") -> AuditResult:
     result.forbidden_hits = warn_freq
     over_limit = [w for w, c in warn_freq.items() if c / kilo_words > 1.0]
     if over_limit:
-        result.warn_violations.append(
-            f"警告禁词频次超标（每千字>1次）: {', '.join(over_limit)}"
-        )
+        result.warn_violations.append(f"警告禁词频次超标: {', '.join(over_limit)}")
 
-    summary_count = detect_summary_tails(text)
-    if summary_count >= 2:
-        result.warn_violations.append(f"连续段落总结尾音触发 {summary_count} 次")
+    if detect_summary_tails(text) >= 2:
+        result.warn_violations.append("连续段落总结尾音触发")
 
-    abstract_nb = detect_abstract_not_but(text)
-    if abstract_nb >= 1:
-        result.warn_violations.append(f"抽象'不是A而是B'用例 {abstract_nb} 处")
+    if detect_abstract_not_but(text) >= 1:
+        result.warn_violations.append(f"抽象'不是A而是B'用例")
 
     if detect_consecutive_pronouns(text):
         result.warn_violations.append("连续四句以上他/她开头且句长均落20-40字窄带")
 
     if result.sensory_channels < 2:
-        result.warn_violations.append(f"感官通道仅 {result.sensory_channels} 个，不足两个")
+        result.warn_violations.append(f"感官通道仅 {result.sensory_channels} 个")
 
     if result.not_but_count > 3:
-        result.warn_violations.append(
-            f"'不是A而是B'全场景 {result.not_but_count} 次，超过密度上限三次"
-        )
+        result.warn_violations.append(f"'不是A而是B'全场景 {result.not_but_count} 次")
 
     if result.em_dash_count / kilo_words > 2.0:
-        result.advisories.append(
-            f"破折号每千字 {result.em_dash_count / kilo_words:.1f} 个，建议控制在两个以内"
-        )
+        result.advisories.append(f"破折号每千字 {result.em_dash_count / kilo_words:.1f} 个")
 
     if result.not_but_count > 2:
-        result.advisories.append(
-            f"'不是A而是B'全场景 {result.not_but_count} 次，注意句式密度"
-        )
+        result.advisories.append(f"'不是A而是B'句式密度偏高 ({result.not_but_count} 次)")
 
     n_fatal = len(result.fatal_violations)
     n_warn = len(result.warn_violations)
@@ -295,10 +380,8 @@ def build_rejection_note(result: AuditResult, iteration: int) -> str:
         lines.append("### 本场建议（不触发驳回）")
         for i, v in enumerate(result.advisories, 1):
             lines.append(f"{i}. {v}")
-    lines.extend([
-        "### 修改指令",
-        "致命违规逐条物理替代。警告累计检查聚集位置。建议条目选择性采纳。",
-    ])
+    lines.append("### 修改指令")
+    lines.append("致命违规逐条物理替代。警告累计检查聚集位置。词链超标精简冗余词组。格式指纹清洗括号批注和总结尾音。章末钩子用物理物体的不完整状态替换抽象感受句。")
     return "\n".join(lines)
 
 
@@ -329,7 +412,8 @@ def silent_push() -> None:
             ["git", "config", "--local", "user.name", "Excioao"],
             ["git", "config", "--local", "user.email", "3127613845@qq.com"],
             ["git", "add", "."],
-            ["git", "commit", "-m", "feat: apply native microsoft autogen framework to cross-llm multi-agent collaborative pipeline"],
+            ["git", "commit", "-m",
+             "refactor: implement practical multiscale heuristics and chapter structure patterns into local 12 and 13 skills, upgrading python pipeline without over-hallucination"],
             ["git", "-c", "http.sslBackend=openssl", "push", "origin", "master"],
         ]:
             subprocess.run(args, cwd=str(ROOT), check=True, capture_output=True)
@@ -337,57 +421,35 @@ def silent_push() -> None:
         pass
 
 
-async def chat(client: AsyncOpenAI, model: str, system: str,
-               prompt: str, temperature: float = 0.7) -> str:
+async def chat(client: AsyncOpenAI, model: str, system: str, prompt: str, temperature: float = 0.7) -> str:
     resp = await client.chat.completions.create(
         model=model,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ],
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
         temperature=temperature,
     )
     return resp.choices[0].message.content or ""
 
 
-async def chat_with_history(client: AsyncOpenAI, model: str, system: str,
-                            messages: list[dict], temperature: float = 0.7) -> str:
-    full = [{"role": "system", "content": system}] + messages
-    resp = await client.chat.completions.create(
-        model=model,
-        messages=full,
-        temperature=temperature,
-    )
-    return resp.choices[0].message.content or ""
-
-
-async def run_one_scene(ds: AsyncOpenAI, km: AsyncOpenAI,
-                         scene_input: str) -> tuple[str, int]:
+async def run_one_scene(ds: AsyncOpenAI, km: AsyncOpenAI, scene_input: str) -> tuple[str, int]:
     dir_sys = build_director_system()
     wrt_sys = build_writer_system()
 
     card = await chat(ds, DS_MODEL, dir_sys,
-                      f"为以下场景生成一张完整的任务卡：\n\n{scene_input}",
-                      temperature=0.3)
-    label = extract_scene_label(card)
-
+                      f"为以下场景生成一张完整的任务卡：\n\n{scene_input}", temperature=0.3)
     draft = await chat(km, KM_MODEL, wrt_sys,
-                       f"请根据以下任务卡撰写正文初稿：\n\n{card}",
-                       temperature=1.0)
+                       f"请根据以下任务卡撰写正文初稿：\n\n{card}", temperature=1.0)
     beat = extract_beat_label(card if card else draft)
-    report = audit(draft, beat)
+    report = audit(draft, beat, retry_round=0)
     iteration = 0
 
     while not report.passed and iteration < MAX_RETRY:
         iteration += 1
         rejection = build_rejection_note(report, iteration)
         rewrite_prompt = (
-            f"## 原始任务卡\n{card}\n\n"
-            f"## {rejection}\n\n"
-            f"## 上一轮正文（需修正）\n{draft}"
+            f"## 原始任务卡\n{card}\n\n## {rejection}\n\n## 上一轮正文（需修正）\n{draft}"
         )
         draft = await chat(km, KM_MODEL, wrt_sys, rewrite_prompt, temperature=1.0)
-        report = audit(draft, beat)
+        report = audit(draft, beat, retry_round=iteration)
 
     return draft, iteration
 
@@ -395,22 +457,16 @@ async def run_one_scene(ds: AsyncOpenAI, km: AsyncOpenAI,
 async def main_loop(scenes: list[str]) -> None:
     ds = AsyncOpenAI(api_key=DS_API_KEY, base_url=DS_BASE_URL)
     km = AsyncOpenAI(api_key=KM_API_KEY, base_url=KM_BASE_URL)
-
     try:
         for i, scene in enumerate(scenes, 1):
             prose, retries = await run_one_scene(ds, km, scene)
             label = f"{i:02d}_{extract_scene_label(prose) if prose else 'error'}"
             append_to_vault(label, prose, retries)
-            status = (
-                "pass" if retries == 0
-                else f"pass(r={retries})" if retries < MAX_RETRY
-                else f"forced({retries})"
-            )
-            print(f"scene {i}: {status}")
+            s = "pass" if retries == 0 else f"pass(r={retries})" if retries < MAX_RETRY else f"forced({retries})"
+            print(f"scene {i}: {s}")
     finally:
         await ds.close()
         await km.close()
-
     silent_push()
     print("done")
 

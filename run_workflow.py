@@ -24,6 +24,7 @@ AGENT_01 = SKILL_DIR / "智能体_01_指挥审计官.md"
 AGENT_02 = SKILL_DIR / "智能体_02_文学创作者.md"
 SKILL_12 = SKILL_DIR / "12_多尺度文本特征指纹拦截.md"
 SKILL_13 = SKILL_DIR / "13_章节结构与连载节奏规范.md"
+SKILL_14 = SKILL_DIR / "14_唯物主义情感互动规范.md"
 MASTER_OUTLINE = ROOT / "主大纲.md"
 LEDGER = ROOT / "历史考据库" / "沈节密核大帅府暗账流水.md"
 
@@ -78,6 +79,15 @@ WARN_WORDS_RE = re.compile(
     r"|不仅仅是|更是|系统|机制|框架"
 )
 
+ROMANCE_CLICHE_RE = re.compile(
+    r"喜欢|爱慕|倾心|动心|动情|心动|心跳漏了一拍|小鹿乱撞|心猿意马|一往情深"
+    r"|脸红|耳赤|脸颊发烫|心跳加速|心跳漏了拍|呼吸一窒|浑身酥麻|电击一般"
+    r"|一股暖流|电流传遍全身|温柔的眼神|深情的目光|含情脉脉|眼波流转"
+    r"|目光缠绵|眼神里藏着爱意|眸中带情|充满爱意的眼神|心里一暖"
+    r"|涌起一阵甜蜜|莫名的心安|说不清的情愫|隐隐约约的情意"
+    r"|依偎|拥抱|情难自禁|不愿松开"
+)
+
 
 @dataclass
 class AuditResult:
@@ -116,6 +126,7 @@ def build_director_system() -> str:
         + "\n\n---\n\n## 暗账流水\n" + load_text(LEDGER)
         + "\n\n---\n\n## 指纹拦截与章节规范\n"
         + load_text(SKILL_12) + "\n\n---\n\n" + load_text(SKILL_13)
+        + "\n\n---\n\n## 情感互动规范\n" + load_text(SKILL_14)
     )
 
 
@@ -125,6 +136,7 @@ def build_writer_system() -> str:
         + "\n\n---\n\n## 全部创作规范\n" + load_all_skills()
         + "\n\n---\n\n## 指纹拦截与章节规范\n"
         + load_text(SKILL_12) + "\n\n---\n\n" + load_text(SKILL_13)
+        + "\n\n---\n\n## 情感互动规范\n" + load_text(SKILL_14)
     )
 
 
@@ -266,6 +278,16 @@ def detect_chapter_end_hook(text: str) -> tuple[bool, str]:
     return True, "ok"
 
 
+def detect_romance_cliches(text: str) -> list[str]:
+    hits = ROMANCE_CLICHE_RE.findall(text)
+    if not hits:
+        return []
+    freq = {}
+    for h in hits:
+        freq[h] = freq.get(h, 0) + 1
+    return [f"工业糖精: '{w}' x{c}" for w, c in freq.items()]
+
+
 def get_dynamic_thresholds(retry_round: int) -> tuple[float, int, int]:
     if retry_round == 0:
         return BASE_CV_THRESHOLD, BASE_NGRAM_LIMIT, BASE_NUMERIC_MIN
@@ -300,6 +322,10 @@ def audit(text: str, beat_label: str = "建立", retry_round: int = 0) -> AuditR
 
     for b in detect_pov_breach(text):
         result.fatal_violations.append(b)
+
+    romance_hits = detect_romance_cliches(text)
+    for rh in romance_hits:
+        result.fatal_violations.append(f"情感描写违规: {rh}")
 
     if result.numeric_count < numeric_min:
         result.fatal_violations.append(

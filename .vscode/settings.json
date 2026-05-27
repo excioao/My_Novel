@@ -1,0 +1,33 @@
+{
+    "workbench.colorTheme": "Gotham",
+    "editor.minimap.enabled": false,
+    "workbench.activityBar.location": "hidden",
+    "workbench.statusBar.visible": false,
+    "editor.lineNumbers": "off",
+    "editor.wordWrap": "on",
+    "cSpell.language": ["en", "zh-CN"],
+    "cSpell.dictionaries": ["chinese"],
+    "editor.renderWhitespace": "none",
+    "editor.occurrencesHighlight": "off",
+    "editor.selectionHighlight": false,
+    "editor.matchBrackets": "never",
+    "editor.glyphMargin": false,
+    "editor.folding": false,
+    "editor.renderLineHighlight": "none",
+    "editor.cursorBlinking": "smooth",
+    "editor.cursorSmoothCaretAnimation": "on",
+    "editor.smoothScrolling": true,
+    "editor.fontSize": 17,
+    "editor.lineHeight": 30,
+    "editor.fontFamily": "'更纱黑体 SC', 'Noto Serif CJK SC', 'Source Han Serif SC', 'SimSun', serif",
+    "workbench.colorCustomizations": {
+        "[Gotham]": {
+            "editor.background": "#0a0b10",
+            "sideBar.background": "#06070a",
+            "editorWidget.background": "#0d0e14",
+            "titleBar.activeBackground": "#06070a",
+            "activityBar.background": "#06070a",
+            "statusBar.background": "#06070a"
+        }
+    }
+}

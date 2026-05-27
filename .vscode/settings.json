@@ -31,5 +31,18 @@
             "activityBar.background": "#06070a",
             "statusBar.background": "#06070a"
         }
-    }
+    },
+    "python.defaultInterpreterPath": "D:\\python\\python.exe",
+    "python.terminal.activateEnvironment": true,
+    "python.analysis.typeCheckingMode": "basic",
+    "files.autoSave": "afterDelay",
+    "files.autoSaveDelay": 1000,
+    "java.configuration.runtimes": [
+        {
+            "name": "JavaSE-25",
+            "path": "E:\\Development\\JDK25",
+            "default": true
+        }
+    ],
+    "java.compile.nullAnalysis.mode": "automatic"
 }

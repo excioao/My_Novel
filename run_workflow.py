@@ -431,13 +431,14 @@ def extract_scene_label(text: str) -> str:
     return m2.group(1).strip() if m2 else f"scene_{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
 
-def save_chapter(chapter_num: int, prose: str, retries: int) -> Path:
+def save_chapter(chapter_num: int, title: str, prose: str, retries: int) -> Path:
+    short_title = title[:6] if len(title) > 6 else title
     stamped = (
-        f"## 第{chapter_num}章\n"
+        f"## 第{chapter_num}章　{short_title}\n"
         f"> 审计通过 / {datetime.now().strftime('%Y-%m-%d %H:%M')} / 驳回 {retries} 次\n\n"
         f"{prose}\n"
     )
-    target = VAULT / f"第{chapter_num:02d}章.md"
+    target = VAULT / f"第{chapter_num:02d}章_{short_title}.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     with open(target, "w", encoding="utf-8") as fh:
         fh.write(stamped)
@@ -500,14 +501,15 @@ async def main_loop(scenes: list[str]) -> None:
     total = len(scenes)
     try:
         for idx, scene in enumerate(scenes):
-            # extract chapter number from scene description
-            m = re.match(r"第(\d+)章", scene)
+            # extract chapter number and title from scene description
+            m = re.match(r"第(\d+)章[——\s]*(.{2,8})", scene)
             ch_num = int(m.group(1)) if m else idx + 1
+            ch_title = m.group(2).strip()[:6] if m and m.group(2) else f"第{ch_num}章"
             bar = "█" * (idx + 1) + "░" * (total - idx - 1) if total > 1 else "█"
-            print(f"\n{'='*50}\n[{bar}] 第{ch_num}章 / 共{total}章\n{'='*50}")
+            print(f"\n{'='*50}\n[{bar}] 第{ch_num}章 {ch_title} / 共{total}章\n{'='*50}")
             print("  [DeepSeek] 下发任务卡...")
             prose, retries = await run_one_scene(ds, km, scene)
-            save_chapter(ch_num, prose, retries)
+            save_chapter(ch_num, ch_title, prose, retries)
             s = "pass" if retries == 0 else f"pass(r={retries})" if retries < MAX_RETRY else f"forced({retries})"
             print(f"  [Kimi] 第{ch_num}章完成: {s}")
             commit_chapter(ch_num, retries)

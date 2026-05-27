@@ -19,7 +19,7 @@
     "editor.smoothScrolling": true,
     "editor.fontSize": 16,
     "editor.lineHeight": 28,
-    "editor.fontFamily": "'JetBrains Mono', 'LXGW WenKai', 'Source Han Serif SC', 'Songti SC', 'FangSong', 'Microsoft YaHei', sans-serif",
+    "editor.fontFamily": "'JetBrains Mono', 'Microsoft YaHei', 'LXGW WenKai', 'Source Han Serif SC', 'FangSong', sans-serif",
     "editor.fontLigatures": true,
     "editor.fontWeight": "normal",
     "workbench.colorCustomizations": {

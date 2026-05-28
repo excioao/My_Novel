@@ -2,7 +2,7 @@
     "workbench.colorTheme": "Gotham",
     "editor.minimap.enabled": false,
     "workbench.activityBar.location": "hidden",
-    "workbench.statusBar.visible": false,
+    "workbench.statusBar.visible": true,
     "editor.lineNumbers": "off",
     "editor.wordWrap": "on",
     "cSpell.language": ["en", "zh-CN"],

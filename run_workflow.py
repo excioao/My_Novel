@@ -29,6 +29,7 @@ SKILL_14 = SKILL_DIR / "14_唯物主义情感互动规范.md"
 SKILL_15 = SKILL_DIR / "15_张力制造去模板化规范.md"
 SKILL_16 = SKILL_DIR / "16_章节级张弛节奏与呼吸章规范.md"
 SKILL_17 = SKILL_DIR / "17_标点符号使用规范.md"
+SKILL_18 = SKILL_DIR / "18_高压场景短句驱动与重复递进技法.md"
 MASTER_OUTLINE = ROOT / "主大纲.md"
 LEDGER = ROOT / "历史考据库" / "沈节密核大帅府暗账流水.md"
 

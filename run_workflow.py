@@ -26,7 +26,7 @@ SKILL_12 = SKILL_DIR / "12_多尺度文本特征指纹拦截.md"
 SKILL_13 = SKILL_DIR / "13_章节结构与连载节奏规范.md"
 SKILL_00 = SKILL_DIR / "00_顶级历史小说语感与审美总纲.md"
 SKILL_14 = SKILL_DIR / "14_唯物主义情感互动规范.md"
-SKILL_15 = SKILL_DIR / "15_张力制造去模板化规范.md"
+SKILL_15 = SKILL_DIR / "15_张力制造去模板化规范.md"  # 最高优先级——一刀切禁令
 SKILL_16 = SKILL_DIR / "16_章节级张弛节奏与呼吸章规范.md"
 SKILL_17 = SKILL_DIR / "17_标点符号使用规范.md"
 SKILL_18 = SKILL_DIR / "18_高压场景短句驱动与重复递进技法.md"
@@ -128,6 +128,7 @@ def load_all_skills() -> str:
 def build_director_system() -> str:
     return (
         load_text(AGENT_01)
+        + "\n\n---\n\n## ⚡最高优先级：不是而是全面封杀\n" + load_text(SKILL_15)
         + "\n\n---\n\n## 审美总纲\n" + load_text(SKILL_00)
         + "\n\n---\n\n## 主大纲\n" + load_text(MASTER_OUTLINE)
         + "\n\n---\n\n## 暗账流水\n" + load_text(LEDGER)
@@ -143,6 +144,7 @@ def build_director_system() -> str:
 def build_writer_system() -> str:
     return (
         load_text(AGENT_02)
+        + "\n\n---\n\n## ⚡最高优先级：不是而是全面封杀\n" + load_text(SKILL_15)
         + "\n\n---\n\n## 审美总纲\n" + load_text(SKILL_00)
         + "\n\n---\n\n## 全部创作规范\n" + load_all_skills()
         + "\n\n---\n\n## 指纹拦截与章节规范\n"

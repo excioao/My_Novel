@@ -382,8 +382,8 @@ def audit(text: str, beat_label: str = "建立", retry_round: int = 0) -> AuditR
     if detect_summary_tails(text) >= 2:
         result.warn_violations.append("连续段落总结尾音触发")
 
-    if detect_abstract_not_but(text) >= 1:
-        result.warn_violations.append(f"抽象'不是A而是B'用例")
+    if count_not_but(text) > 0:
+        result.fatal_violations.append("一刀切：'不是X是Y'/'不是X而是Y'句型全面封杀，全文禁止")
 
     if detect_consecutive_pronouns(text):
         result.warn_violations.append("连续四句以上他/她开头且句长均落20-40字窄带")
@@ -391,14 +391,8 @@ def audit(text: str, beat_label: str = "建立", retry_round: int = 0) -> AuditR
     if result.sensory_channels < 2:
         result.warn_violations.append(f"感官通道仅 {result.sensory_channels} 个")
 
-    if result.not_but_count > 3:
-        result.warn_violations.append(f"'不是A而是B'全场景 {result.not_but_count} 次")
-
     if result.em_dash_count / kilo_words > 2.0:
         result.advisories.append(f"破折号每千字 {result.em_dash_count / kilo_words:.1f} 个")
-
-    if result.not_but_count > 2:
-        result.advisories.append(f"'不是A而是B'句式密度偏高 ({result.not_but_count} 次)")
 
     n_fatal = len(result.fatal_violations)
     n_warn = len(result.warn_violations)

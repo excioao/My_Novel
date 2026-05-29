@@ -282,29 +282,6 @@ def scan_format_fingerprints(text: str) -> list[str]:
     return fps
 
 
-def count_fragment_clusters(text: str, max_len: int = 8, consecutive: int = 3) -> tuple[int, list[str]]:
-    """Detect staccato prose: 3+ consecutive short sentences (<=max_len chars each)."""
-    sents = [s.strip() for s in re.split(r"[。！？\n]+", text) if s.strip()]
-    clusters = 0
-    examples = []
-    streak = 0
-    streak_start = 0
-    for i, s in enumerate(sents):
-        if len(s) <= max_len:
-            if streak == 0:
-                streak_start = i
-            streak += 1
-        else:
-            if streak >= consecutive:
-                clusters += 1
-                examples.append(" | ".join(sents[streak_start:streak_start + streak]))
-            streak = 0
-    if streak >= consecutive:
-        clusters += 1
-        examples.append(" | ".join(sents[streak_start:streak_start + streak]))
-    return clusters, examples
-
-
 def detect_chapter_end_hook(text: str) -> tuple[bool, str]:
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     if len(paragraphs) < 2:
@@ -421,12 +398,6 @@ def audit(text: str, beat_label: str = "建立", retry_round: int = 0) -> AuditR
     if detect_consecutive_pronouns(text):
         result.warn_violations.append("连续四句以上他/她开头且句长均落20-40字窄带")
 
-    frag_clusters, frag_examples = count_fragment_clusters(text)
-    if frag_clusters > 0:
-        result.warn_violations.append(
-            f"碎句轰炸: {frag_clusters} 处连续短句扎堆 (≤8字句×3连)。示例: {frag_examples[0][:60]}..."
-        )
-
     if result.sensory_channels < 2:
         result.warn_violations.append(f"感官通道仅 {result.sensory_channels} 个")
 
@@ -525,28 +496,23 @@ async def chat(client: AsyncOpenAI, model: str, system: str, prompt: str, temper
 async def chat_director(client: AsyncOpenAI, model: str, system: str, prompt: str,
                         label: str = "director") -> str:
     """Non-streaming chat for director (DeepSeek). Short output + enables prompt caching."""
-    resp = await client.chat.completions.create(
+    raw = await client.chat.completions.with_raw_response.create(
         model=model,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
         temperature=0,
         stream=False,
     )
-    result = resp.choices[0].message.content or ""
+    parsed = raw.parse()
+    result = parsed.choices[0].message.content or ""
 
-    # Log cache status from response headers
-    http_resp = getattr(resp, "response", None) or getattr(resp, "_response", None)
-    if http_resp is not None:
-        cache_hit = http_resp.headers.get("x-ds-cache-hit", "n/a")
-        cache_ttl = http_resp.headers.get("x-ds-cache-ttl", "n/a")
-        usage = getattr(resp, "usage", None)
-        prompt_tokens = usage.prompt_tokens if usage else "?"
-        cached_tokens = getattr(usage, "prompt_tokens_details", None)
-        cached_info = ""
-        if cached_tokens is not None:
-            cached_info = f", cached={getattr(cached_tokens, 'cached_tokens', '?')}"
-        print(f"  [{label}] {len(result)} 字符 | cache={cache_hit} ttl={cache_ttl} | prompt_tokens={prompt_tokens}{cached_info}")
-    else:
-        print(f"  [{label}] {len(result)} 字符 | cache headers unavailable")
+    # Log cache status from raw response headers
+    http_resp = raw.http_response
+    cache_hit = http_resp.headers.get("x-ds-cache-hit", "n/a")
+    usage = getattr(parsed, "usage", None)
+    prompt_tokens = usage.prompt_tokens if usage else "?"
+    completion_tokens = usage.completion_tokens if usage else "?"
+    print(f"  [{label}] {len(result)} 字符 | cache={cache_hit} | "
+          f"prompt={prompt_tokens} completion={completion_tokens}")
 
     return result
 

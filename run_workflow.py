@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 run_workflow.py -- dual-model writing pipeline.
 Director (DeepSeek V4 Pro) issues mission cards. Writer (Kimi K2.5) generates prose.
@@ -94,6 +95,20 @@ ROMANCE_CLICHE_RE = re.compile(
     r"|依偎|拥抱|情难自禁|不愿松开"
 )
 
+# F8: era-internal perception constraints — modern lab terminology is anachronistic
+ERA_ANACHRONISM_RE = re.compile(
+    r"零下.{0,10}度"
+    r"|气温.{0,10}度"
+    r"|摄氏度"
+    r"|每分钟.{0,20}[次下拍]"
+    r"|心率.{0,30}[次下拍\d]"
+    r"|心跳.{0,10}每分钟"
+    r"|毫[米秒]"
+    r"|厘[米秒]"
+    r"|百分之.{0,10}"
+    r"|\d+\.?\d*\s*[%％]"
+)
+
 
 @dataclass
 class AuditResult:
@@ -126,33 +141,21 @@ def load_all_skills() -> str:
 
 
 def build_director_system() -> str:
+    """Director gets agent definition (which embeds all fatal rules) + outline + ledger + era constraint."""
     return (
         load_text(AGENT_01)
-        + "\n\n---\n\n## ⚡最高优先级：不是而是全面封杀\n" + load_text(SKILL_15)
+        + "\n\n---\n\n## 时代内感知约束（致命级补充）\n" + load_text(SKILL_19)
         + "\n\n---\n\n## 审美总纲\n" + load_text(SKILL_00)
         + "\n\n---\n\n## 主大纲\n" + load_text(MASTER_OUTLINE)
         + "\n\n---\n\n## 暗账流水\n" + load_text(LEDGER)
-        + "\n\n---\n\n## 指纹拦截与章节规范\n"
-        + load_text(SKILL_12) + "\n\n---\n\n" + load_text(SKILL_13)
-        + "\n\n---\n\n## 情感互动规范\n" + load_text(SKILL_14)
-        + "\n\n---\n\n## 张力制造去模板化\n" + load_text(SKILL_15)
-        + "\n\n---\n\n## 章节张弛节奏\n" + load_text(SKILL_16)
-        + "\n\n---\n\n## 标点符号规范\n" + load_text(SKILL_17)
     )
 
 
 def build_writer_system() -> str:
+    """Writer gets agent definition + all skill files exactly once."""
     return (
         load_text(AGENT_02)
-        + "\n\n---\n\n## ⚡最高优先级：不是而是全面封杀\n" + load_text(SKILL_15)
-        + "\n\n---\n\n## 审美总纲\n" + load_text(SKILL_00)
         + "\n\n---\n\n## 全部创作规范\n" + load_all_skills()
-        + "\n\n---\n\n## 指纹拦截与章节规范\n"
-        + load_text(SKILL_12) + "\n\n---\n\n" + load_text(SKILL_13)
-        + "\n\n---\n\n## 情感互动规范\n" + load_text(SKILL_14)
-        + "\n\n---\n\n## 张力制造去模板化\n" + load_text(SKILL_15)
-        + "\n\n---\n\n## 章节张弛节奏\n" + load_text(SKILL_16)
-        + "\n\n---\n\n## 标点符号规范\n" + load_text(SKILL_17)
     )
 
 
@@ -279,6 +282,29 @@ def scan_format_fingerprints(text: str) -> list[str]:
     return fps
 
 
+def count_fragment_clusters(text: str, max_len: int = 8, consecutive: int = 3) -> tuple[int, list[str]]:
+    """Detect staccato prose: 3+ consecutive short sentences (<=max_len chars each)."""
+    sents = [s.strip() for s in re.split(r"[。！？\n]+", text) if s.strip()]
+    clusters = 0
+    examples = []
+    streak = 0
+    streak_start = 0
+    for i, s in enumerate(sents):
+        if len(s) <= max_len:
+            if streak == 0:
+                streak_start = i
+            streak += 1
+        else:
+            if streak >= consecutive:
+                clusters += 1
+                examples.append(" | ".join(sents[streak_start:streak_start + streak]))
+            streak = 0
+    if streak >= consecutive:
+        clusters += 1
+        examples.append(" | ".join(sents[streak_start:streak_start + streak]))
+    return clusters, examples
+
+
 def detect_chapter_end_hook(text: str) -> tuple[bool, str]:
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     if len(paragraphs) < 2:
@@ -343,6 +369,11 @@ def audit(text: str, beat_label: str = "建立", retry_round: int = 0) -> AuditR
     for rh in romance_hits:
         result.fatal_violations.append(f"情感描写违规: {rh}")
 
+    # F8: 时代内感知约束——现代实验室术语
+    era_hits = ERA_ANACHRONISM_RE.findall(text)
+    if era_hits:
+        result.fatal_violations.append(f"时代错位——现代实验室术语: {', '.join(set(h.strip() for h in era_hits)[:5])}")
+
     if result.numeric_count < numeric_min:
         result.fatal_violations.append(
             f"数目字 {result.numeric_count} 个，低于动态下限 {numeric_min}"
@@ -389,6 +420,12 @@ def audit(text: str, beat_label: str = "建立", retry_round: int = 0) -> AuditR
 
     if detect_consecutive_pronouns(text):
         result.warn_violations.append("连续四句以上他/她开头且句长均落20-40字窄带")
+
+    frag_clusters, frag_examples = count_fragment_clusters(text)
+    if frag_clusters > 0:
+        result.warn_violations.append(
+            f"碎句轰炸: {frag_clusters} 处连续短句扎堆 (≤8字句×3连)。示例: {frag_examples[0][:60]}..."
+        )
 
     if result.sensory_channels < 2:
         result.warn_violations.append(f"感官通道仅 {result.sensory_channels} 个")
@@ -462,7 +499,7 @@ def commit_chapter(chapter_num: int, retries: int) -> None:
 
 async def chat(client: AsyncOpenAI, model: str, system: str, prompt: str, temperature: float = 0.7,
                 label: str = "generating") -> str:
-    """Streaming chat with progress display."""
+    """Streaming chat with progress display. Used for writer (Kimi) — long outputs need streaming UX."""
     stream = await client.chat.completions.create(
         model=model,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
@@ -485,15 +522,42 @@ async def chat(client: AsyncOpenAI, model: str, system: str, prompt: str, temper
     return result
 
 
-async def run_one_scene(ds: AsyncOpenAI, km: AsyncOpenAI, scene_input: str,
-                         ch_label: str = "") -> tuple[str, int]:
-    dir_sys = build_director_system()
-    wrt_sys = build_writer_system()
+async def chat_director(client: AsyncOpenAI, model: str, system: str, prompt: str,
+                        label: str = "director") -> str:
+    """Non-streaming chat for director (DeepSeek). Short output + enables prompt caching."""
+    resp = await client.chat.completions.create(
+        model=model,
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+        temperature=0,
+        stream=False,
+    )
+    result = resp.choices[0].message.content or ""
 
+    # Log cache status from response headers
+    http_resp = getattr(resp, "response", None) or getattr(resp, "_response", None)
+    if http_resp is not None:
+        cache_hit = http_resp.headers.get("x-ds-cache-hit", "n/a")
+        cache_ttl = http_resp.headers.get("x-ds-cache-ttl", "n/a")
+        usage = getattr(resp, "usage", None)
+        prompt_tokens = usage.prompt_tokens if usage else "?"
+        cached_tokens = getattr(usage, "prompt_tokens_details", None)
+        cached_info = ""
+        if cached_tokens is not None:
+            cached_info = f", cached={getattr(cached_tokens, 'cached_tokens', '?')}"
+        print(f"  [{label}] {len(result)} 字符 | cache={cache_hit} ttl={cache_ttl} | prompt_tokens={prompt_tokens}{cached_info}")
+    else:
+        print(f"  [{label}] {len(result)} 字符 | cache headers unavailable")
+
+    return result
+
+
+async def run_one_scene(ds: AsyncOpenAI, km: AsyncOpenAI, scene_input: str,
+                         dir_sys: str, wrt_sys: str,
+                         ch_label: str = "") -> tuple[str, int]:
     print(f"  [DeepSeek] 任务卡生成中...")
-    card = await chat(ds, DS_MODEL, dir_sys,
-                      f"为以下场景生成一张完整的任务卡：\n\n{scene_input}",
-                      temperature=0.3, label="任务卡")
+    card = await chat_director(ds, DS_MODEL, dir_sys,
+                               f"为以下场景生成一张完整的任务卡：\n\n{scene_input}",
+                               label="任务卡")
 
     print(f"  [Kimi] 初稿写作中...")
     draft = await chat(km, KM_MODEL, wrt_sys,
@@ -521,15 +585,23 @@ async def main_loop(scenes: list[str]) -> None:
     ds = AsyncOpenAI(api_key=DS_API_KEY, base_url=DS_BASE_URL)
     km = AsyncOpenAI(api_key=KM_API_KEY, base_url=KM_BASE_URL)
     total = len(scenes)
+
+    # Pre-build system prompts once — identical string object across all chapters enables caching
+    dir_sys = build_director_system()
+    wrt_sys = build_writer_system()
+    dir_tokens_est = len(dir_sys) // 3
+    wrt_tokens_est = len(wrt_sys) // 3
+    print(f"System prompts built: director ~{dir_tokens_est} tok, writer ~{wrt_tokens_est} tok")
+
     try:
         for idx, scene in enumerate(scenes):
-            # extract chapter number and title from scene description
             m = re.match(r"第(\d+)章[——\s]*(.{2,8})", scene)
             ch_num = int(m.group(1)) if m else idx + 1
             ch_title = m.group(2).strip()[:6] if m and m.group(2) else f"第{ch_num}章"
             bar = "█" * (idx + 1) + "░" * (total - idx - 1) if total > 1 else "█"
             print(f"\n{'='*50}\n[{bar}] 第{ch_num}章 {ch_title} / 共{total}章\n{'='*50}")
-            prose, retries = await run_one_scene(ds, km, scene, ch_label=f"第{ch_num}章")
+            prose, retries = await run_one_scene(ds, km, scene, dir_sys, wrt_sys,
+                                                 ch_label=f"第{ch_num}章")
             save_chapter(ch_num, ch_title, prose, retries)
             s = "pass" if retries == 0 else f"pass(r={retries})" if retries < MAX_RETRY else f"forced({retries})"
             print(f"  [Kimi] 第{ch_num}章完成: {s}")
@@ -542,8 +614,7 @@ async def main_loop(scenes: list[str]) -> None:
 
 def main():
     asyncio.run(main_loop([
-        "第6章——进大帅府。沈节骑马抵达大帅府，被安排在军机书房等候。主母顾韫隔着一张木桌看了他整整十息。桌面上一盏油灯，灯捻烧焦了半截，没有人去拨。主母开口说的第一句话是：'你在锦衣卫的代号是什么。'多写沈节的生理反应——心率变化、碎铁片在胸腔里的感觉、手指在膝盖上停了一息没动。多写主母的面部控制和书房里的物理细节。",
-    ]))
+        "第2章——北镇抚司暗桩。视点沈节（此时仍叫狗娃）。场景分三段：地下训练场承受老暗桩木棍钝击训练（教的是被打时心脏别停）、石室识字课抄写暗语模板（账面兵员/实战兵员/差额空饷）、档案库挂牌（百户在空白木牌上给他写下代号'沈节'，挂进一排无名暗桩档案袋中间）。物理锚点：北镇抚司地下三层，砖墙渗水结冰，火把光，杨木柱有前任汗碱凹痕。关键道具：短木棍裹浸油麻布、榆木矮桌上一道被反复刻出来的竖痕、松烟墨掺矾水写在糙纸上洇开、松木档案架上一排灰尘厚度不一的木牌。沈节的身体状态：左胸旧伤碎铁片（辽东破甲箭残留），每挨一棍心跳变化他用默数'几息恢复'来测量——不是现代心率读数，是时代内感知。章末钩子：他走到地面，京城雪落下来，心率稳定，多撑一口气。注意：全文禁止出现'心率XX次/分钟''零下X度''毫米''百分比'等现代实验室术语。碎铁片的感觉用'钝痛''骨缝里像有碎玻璃'而非精确位移数字。",    ]))
 
 
 if __name__ == "__main__":

@@ -57,7 +57,7 @@ NGRAM_BLACKLIST = [
     "打通", "链路", "颗粒度", "维度", "底层逻辑",
 ]
 
-FORMAT_PREAMBLE_RE = re.compile(r"^(好的[，,]|明白了[，,]|让我来写|以下是根据|为您创作)")
+FORMAT_PREAMBLE_RE = re.compile(r"^(好的[，,]|明白了[，,]|让我来写|以下是根据|为您创作|已加载\s*\d|第\s*\d+\s*次重写)")
 FORMAT_PAREN_RE = re.compile(r"[（(][^）)]{3,}[）)]")
 FORMAT_SUMMARY_TAIL_TRIGGERS = [
     "这意味", "由此可见", "综上", "总而言之", "通过以上", "到这里", "说明了", "启示", "告诉我们",
@@ -81,6 +81,9 @@ ABSTRACT_MARKERS = [
 ]
 
 FATAL_WORDS_RE = re.compile(r"赋能|抓手|闭环|对齐|拉通|打通|链路|颗粒度|维度|底层逻辑")
+
+# English word leakage — standalone Latin words in Chinese prose are never OK
+ENGLISH_WORD_RE = re.compile(r"[a-zA-Z]{3,}")
 WARN_WORDS_RE = re.compile(
     r"地狱|绝望|冷酷|铁血|震撼|笼罩|讽刺|致敬"
     r"|不仅仅是|更是|系统|机制|框架"
@@ -346,10 +349,10 @@ def audit(text: str, beat_label: str = "建立", retry_round: int = 0) -> AuditR
     for rh in romance_hits:
         result.fatal_violations.append(f"情感描写违规: {rh}")
 
-    # F8: 时代内感知约束——现代实验室术语
+    # F9: 时代内感知约束——现代实验室术语
     era_hits = ERA_ANACHRONISM_RE.findall(text)
     if era_hits:
-        result.fatal_violations.append(f"时代错位——现代实验室术语: {', '.join(set(h.strip() for h in era_hits)[:5])}")
+        result.fatal_violations.append(f"时代错位——现代实验室术语: {', '.join(list(set(h.strip() for h in era_hits))[:5])}")
 
     if result.numeric_count < numeric_min:
         result.fatal_violations.append(
@@ -365,6 +368,10 @@ def audit(text: str, beat_label: str = "建立", retry_round: int = 0) -> AuditR
     fatal_word_hits = FATAL_WORDS_RE.findall(text)
     if fatal_word_hits:
         result.fatal_violations.append(f"致命禁词: {', '.join(set(fatal_word_hits))}")
+
+    english_hits = ENGLISH_WORD_RE.findall(text)
+    if english_hits:
+        result.fatal_violations.append(f"英文词泄漏: {', '.join(set(english_hits))}")
 
     if result.ngram_hits / kilo_words > ngram_limit:
         result.warn_violations.append(
@@ -505,14 +512,29 @@ async def chat_director(client: AsyncOpenAI, model: str, system: str, prompt: st
     parsed = raw.parse()
     result = parsed.choices[0].message.content or ""
 
-    # Log cache status from raw response headers
-    http_resp = raw.http_response
-    cache_hit = http_resp.headers.get("x-ds-cache-hit", "n/a")
-    usage = getattr(parsed, "usage", None)
-    prompt_tokens = usage.prompt_tokens if usage else "?"
-    completion_tokens = usage.completion_tokens if usage else "?"
-    print(f"  [{label}] {len(result)} 字符 | cache={cache_hit} | "
-          f"prompt={prompt_tokens} completion={completion_tokens}")
+    # Extract cache stats from parsed usage + raw response body
+    usage = parsed.usage
+    prompt_tok = usage.prompt_tokens if usage else "?"
+    comp_tok = usage.completion_tokens if usage else "?"
+
+    # openai-parsed cached_tokens (may be 0 even on cache hit — DeepSeek uses custom fields)
+    cached_parsed = 0
+    if usage and usage.prompt_tokens_details:
+        cached_parsed = getattr(usage.prompt_tokens_details, "cached_tokens", 0) or 0
+
+    # DeepSeek-specific cache fields in raw response body
+    raw_body = raw.http_response.json()
+    raw_usage = raw_body.get("usage", {})
+    cache_hit_tok = raw_usage.get("prompt_cache_hit_tokens", "?")
+    cache_miss_tok = raw_usage.get("prompt_cache_miss_tokens", "?")
+
+    ratio = ""
+    if isinstance(cache_hit_tok, int) and isinstance(cache_miss_tok, int) and (cache_hit_tok + cache_miss_tok) > 0:
+        total_cache = cache_hit_tok + cache_miss_tok
+        ratio = f" hit_rate={cache_hit_tok/total_cache:.0%}"
+
+    print(f"  [{label}] {len(result)} 字符 | prompt={prompt_tok} comp={comp_tok} | "
+          f"cache: hit={cache_hit_tok} miss={cache_miss_tok} cached_parsed={cached_parsed}{ratio}")
 
     return result
 

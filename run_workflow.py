@@ -408,6 +408,13 @@ def audit(text: str, beat_label: str = "建立", retry_round: int = 0) -> AuditR
     if result.sensory_channels < 2:
         result.warn_violations.append(f"感官通道仅 {result.sensory_channels} 个")
 
+    # River sentences — 150+ char single sentences with only commas, no periods
+    sents = [s.strip() for s in re.split(r"[。！？\n]+", text) if s.strip()]
+    river_sents = [(s[:30] + "…", len(s)) for s in sents if len(s) > 150]
+    if river_sents:
+        examples = " / ".join(f"[{length}字] {preview}" for preview, length in river_sents[:2])
+        result.warn_violations.append(f"河流句: {len(river_sents)} 句超 150 字无句号——逗号串联过长。示例: {examples}")
+
     if result.em_dash_count / kilo_words > 2.0:
         result.advisories.append(f"破折号每千字 {result.em_dash_count / kilo_words:.1f} 个")
 
@@ -462,6 +469,9 @@ def _gen_fix_instruction(violation: str, result: AuditResult) -> str:
     if "感官通道仅" in v:
         missing = ["触觉（冷/热/粗/滑/黏/硬）", "听觉（风声/脚步/金属碰撞/冰裂）", "嗅觉（霉/锈/焦/腥/松脂）", "温度感（体感冷暖/物体温差）"]
         return f"感官通道不足（当前 {result.sensory_channels} 个）：在当前场景的物理空间中，补充至少一种缺失的感官——{', '.join(missing[:2])}。不用多，一处就够。"
+    if "河流句" in v:
+        return "河流句——逗号串联过长：把超过 150 字无句号的逗号长链切断成 2-3 句。找到自然的事件边界（动作完成、感知切换、物体状态改变），在那个边界加句号。不是每一处逗号都换——只在物理事件真正转换的地方断句。"
+
     if "破折号" in v:
         return f"破折号超标（每千字 {result.em_dash_count / max(result.chapter_word_count, 1) * 1000:.1f} 个）：将部分破折号替换为句号或逗号。破折号是匕首——一把够用，三把就是军火库。"
 
@@ -623,7 +633,11 @@ async def run_one_scene(ds: AsyncOpenAI, km: AsyncOpenAI, scene_input: str,
         iteration += 1
         rejection = build_rejection_note(report, iteration)
         rewrite_prompt = (
-            f"## 原始任务卡\n{card}\n\n## {rejection}\n\n## 上一轮正文（需修正）\n{draft}"
+            f"## ⚠️ 审计驳回——以下每条必须逐字修正，不得跳过任何一条\n\n"
+            f"## 原始任务卡\n{card}\n\n## {rejection}\n\n"
+            f"## 上一轮正文（需修正）\n{draft}\n\n"
+            f"## ⚠️ 再次强调：上面每一条致命违规都必须在本轮重写中消除。"
+            f"警告累计≥3 条也会驳回。这不是建议——是不改就再驳回。"
         )
         print(f"  [审计] 驳回 {iteration}/{MAX_RETRY}，踢回 Kimi 重写...")
         draft = await chat(km, KM_MODEL, wrt_sys, rewrite_prompt,

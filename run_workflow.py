@@ -417,6 +417,58 @@ def audit(text: str, beat_label: str = "建立", retry_round: int = 0) -> AuditR
     return result
 
 
+def _gen_fix_instruction(violation: str, result: AuditResult) -> str:
+    """Generate a specific, actionable fix instruction for a given violation."""
+    v = violation
+
+    # --- FATAL ---
+    if "句长变异系数" in v:
+        return f"句长变异过低（当前 {result.sentence_cv:.2f}）：在紧张处砍出 1-2 句极短句（3-5 字），在舒缓处拉出 1 句长白描（50+ 字），拉开长短句距离。不是润色，是物理地改变句子长度。"
+    if "POV盲区跨越" in v:
+        return "POV 盲区跨越：找到视点角色不可能知道的那句话，删掉。改为纯外部观察——只写眼睛看到的、耳朵听到的、身体在这一刻感受到的物理信号。"
+    if "情感描写违规" in v:
+        return "工业糖精：将违规情感词汇全部替换为物理动作或生理反应。不写'心动'——写心跳的具体变化（快了一息/沉了下去/撞着肋骨）。不写'温柔的眼神'——写瞳孔在光线里的收缩或扩张。"
+    if "数目字" in v and "低于" in v:
+        target = result.numeric_count + 2 if result.numeric_count < 2 else 3
+        return f"数目字不足（当前 {result.numeric_count} 个）：在本文关键道具和空间上各给一个精确度量——桌长几尺、棍粗几分、米糊几碗、水渍几寸。目标≥{target} 个。使用明末单位（步/尺/寸/里/丈/石/斤/两/斗/升）。"
+    if "章节字数" in v and "低于" in v:
+        shortfall = 2500 - result.chapter_word_count
+        return f"字数不足（差 {shortfall} 字）：不是加水词。在现有场景的物理描写和感官细节上纵向展开——多写一层冰壳的厚度、多写一种气味在鼻腔里的扩散路径、多写一个物体在火光下的阴影形状。每加一处至少 30 字。"
+    if "章节字数" in v and "超过" in v:
+        excess = result.chapter_word_count - 3800
+        return f"字数超限（超 {excess} 字）：砍掉重复的感官描写，保留最精确的那一处。两处相似的温度描写留一处，三处类似的痛感留最具体的那个。"
+    if "致命禁词" in v:
+        return f"致命禁词：全文搜索并替换这些词——{v.split(':', 1)[1] if ':' in v else v}。这些词属于互联网或现代管理术语，在明末语境中不存在。用物理等价物替代。"
+    if "一刀切" in v and "不是" in v:
+        return "不是而是句式——一刀切封杀：全文搜索'不是……而是……'（含变体'不是……是……'）。每处重构：直接给物理事实，不先否定一个再肯定一个。改写为：直接观察→直接感受。不需要任何'不是'来做认知纠正。"
+    if "时代错位" in v:
+        return "时代错位——现代实验室术语：将违规的现代测量表述全部替换。温度→冰的化与不化/手指碰金属的温差。心率→心跳快慢/呼吸节奏。距离→步/尺/寸。百分比→视觉化比例（'大半''约三成'仅在不出现数字时可用为视角角色的模糊估计）。"
+    if "英文词泄漏" in v:
+        return f"英文词泄漏：全文搜索并删除所有拉丁字母单词——{v.split(':', 1)[1] if ':' in v else v}。替换为对应的中文表述。明末小说正文不含任何英文字母。"
+
+    # --- WARNING ---
+    if "词链密度" in v:
+        return "词链密度超标：检查重复出现的高频词组聚集位置。精简冗余修饰——同一个意思不需要用两个近义词各说一遍。"
+    if "格式指纹" in v:
+        return "格式指纹：删除前置客套话（'好的''以下是根据'等）、括号内剧本式批注、'首先-其次-最后'三段式陈列、段末总结尾音。正文就是正文——第一行就是小说第一句。"
+    if "章末钩子" in v:
+        return "章末钩子：用物理物体的不完整状态收尾——一个未完成的动作（手指停在半空）、一件正在变化的物体（冰壳在火把下缓慢滴水）、一个被中断的感知（脚步声消失在拐角）。不要抽象感受句，不要情绪总结。"
+    if "警告禁词频次超标" in v:
+        return f"警告禁词超标：降低以下词汇频次——{v.split(':', 1)[1] if ':' in v else v}。角色在高压台词中可以使用，叙述者旁白中须替换为物理等价物。"
+    if "连续段落总结尾音" in v:
+        return "连续总结尾音：删除段末的'这意味着''由此可见''综上''说明了'等总结触发词。物理事实自己说话——不需要一个旁白来替读者总结。"
+    if "连续四句以上" in v and "他/她" in v:
+        return "连续代词机械节奏：找到连续'他/她'开头的 4+ 句。把其中 1-2 句的主语改为物（'桌面上的竖痕''砖缝里的冰壳'）或直接省略主语，打破匀速节拍。"
+    if "感官通道仅" in v:
+        missing = ["触觉（冷/热/粗/滑/黏/硬）", "听觉（风声/脚步/金属碰撞/冰裂）", "嗅觉（霉/锈/焦/腥/松脂）", "温度感（体感冷暖/物体温差）"]
+        return f"感官通道不足（当前 {result.sensory_channels} 个）：在当前场景的物理空间中，补充至少一种缺失的感官——{', '.join(missing[:2])}。不用多，一处就够。"
+    if "破折号" in v:
+        return f"破折号超标（每千字 {result.em_dash_count / max(result.chapter_word_count, 1) * 1000:.1f} 个）：将部分破折号替换为句号或逗号。破折号是匕首——一把够用，三把就是军火库。"
+
+    # Fallback
+    return "逐条物理替代——用具体物理动作或场景细节替换抽象表达。"
+
+
 def build_rejection_note(result: AuditResult, iteration: int) -> str:
     lines = ["## 审计驳回", f"### 第 {iteration} 次驳回"]
     if result.fatal_violations:
@@ -431,8 +483,20 @@ def build_rejection_note(result: AuditResult, iteration: int) -> str:
         lines.append("### 本场建议（不触发驳回）")
         for i, v in enumerate(result.advisories, 1):
             lines.append(f"{i}. {v}")
+
+    # Dynamic, violation-specific fix instructions
     lines.append("### 修改指令")
-    lines.append("致命违规逐条物理替代。警告累计检查聚集位置。词链超标精简冗余词组。格式指纹清洗括号批注和总结尾音。章末钩子用物理物体的不完整状态替换抽象感受句。")
+    seen = set()
+    for v in result.fatal_violations:
+        inst = _gen_fix_instruction(v, result)
+        if inst not in seen:
+            lines.append(f"- [致命] {inst}")
+            seen.add(inst)
+    for v in result.warn_violations:
+        inst = _gen_fix_instruction(v, result)
+        if inst not in seen:
+            lines.append(f"- [警告] {inst}")
+            seen.add(inst)
     return "\n".join(lines)
 
 

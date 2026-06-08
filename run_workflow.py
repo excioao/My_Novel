@@ -369,10 +369,10 @@ def audit(text: str, beat_label: str = "建立", retry_round: int = 0) -> AuditR
         )
 
     cw = result.chapter_word_count
-    if cw < 500:
-        result.warn_violations.append(f"章节字数 {cw} 极低——可能生成中断")
-    elif cw > 5000:
-        result.warn_violations.append(f"章节字数 {cw} 超高——可能生成失控")
+    if cw < 1500:
+        result.fatal_violations.append(f"章节字数 {cw} 低于下限 1500——可能节拍不足，考虑从前一章拉内容进来")
+    elif cw > 3500:
+        result.fatal_violations.append(f"章节字数 {cw} 超过上限 3500——可能节拍过多，考虑把后半内容推到下一章")
 
     fatal_word_hits = FATAL_WORDS_RE.findall(text)
     if fatal_word_hits:

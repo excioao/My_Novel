@@ -411,6 +411,22 @@ def audit(text: str, beat_label: str = "建立", retry_round: int = 0) -> AuditR
     if count_not_but(text) > 0:
         result.fatal_violations.append("一刀切：'不是X是Y'/'不是X而是Y'句型全面封杀，全文禁止")
 
+    # 新AI病灶: 息数密度——用呼吸计数替代了尺寸测量
+    breath_counts = len(re.findall(r'\d+\s*息', text))
+    if breath_counts / kilo_words > 8:
+        result.warn_violations.append(f"息数量表成精: {breath_counts}处/千字{breath_counts/kilo_words:.1f}——挨打数息看戒指数息碎铁偏了也数息，活人不用秒表感知时间")
+
+    # 新AI病灶: 碎句轰炸——用句号替代逗号呼吸
+    sents = [s.strip() for s in re.split(r"[。！？\n]+", text) if s.strip()]
+    tiny_sents = [s for s in sents if len(s) <= 4]
+    if len(tiny_sents) / max(len(sents), 1) > 0.20:
+        result.warn_violations.append(f"碎句打嗝: {len(tiny_sents)}句≤4字占比{len(tiny_sents)/max(len(sents),1):.0%}——动作被句号切碎成电报，合并60%回逗号")
+
+    # 新AI病灶: 画外音——动作后追加保姆解释
+    voiceover = len(re.findall(r'[他她]注意到|[他她]看[到见]了|[他她]听[到见]了|[他她]发现|[他她]知道.{0,10}——', text))
+    if voiceover / kilo_words > 5:
+        result.warn_violations.append(f"画外音密度: {voiceover}处/千字{voiceover/kilo_words:.1f}——AI在给每个伏笔加字幕，砍掉'他知道''他发现'，直接写物理事实")
+
     if detect_consecutive_pronouns(text):
         result.warn_violations.append("连续四句以上他/她开头且句长均落20-40字窄带")
 
@@ -485,6 +501,15 @@ def _gen_fix_instruction(violation: str, result: AuditResult) -> str:
         return "连续代词机械节奏：找到连续'他/她'开头的 4+ 句。把其中 1-2 句的主语改为物（'桌面上的竖痕''砖缝里的冰壳'）或直接省略主语，打破匀速节拍。"
     if "感官堆砌" in v:
         return "感官堆砌——AI五感checklist：同一段内不要同时写视觉+触觉+听觉+温度感。活人在同一秒钟只调用一到两个感官。把多余的感官描写分散到不同段落，或者直接删掉最弱的那个。"
+
+    if "息数量表成精" in v:
+        return "息数量表——AI把尺寸禁令转移到了呼吸计数。偶尔数息是暗桩素养，每次关键时刻都数息就是人形秒表。把数字还给主观感知——灯捻烧断、泥浆结壳、影子移到墙角——用物理变化标记时间。"
+
+    if "碎句打嗝" in v:
+        return "碎句轰炸——AI用句号替代逗号呼吸。'他没有动。翻开。空白。喝。冷。'——保留爆破性短句（生死一瞬），其余动作揉成连贯长句。合并60%回逗号。"
+
+    if "画外音密度" in v:
+        return "画外音——AI在给每个伏笔加字幕。动作本身足够。李观照看残渣→抬头看沈节一眼，就够了。不需要旁白解释'她是在反向推定剩余剂量'。砍掉'他知道''他发现''他注意到'——让读者自己破案。"
 
     if "POV标注过度" in v:
         return "POV标注过度——每句都写'他看到''他听到'是AI的拐杖。删掉感知动词，直接写物理事实。不是'他看到冰面反射着光'——是'冰面反射着光'。读者知道视点是谁，不用每句提醒。"

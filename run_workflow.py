@@ -191,11 +191,12 @@ def count_sensory_channels(text: str) -> int:
 def count_not_but(text: str) -> int:
     """Detect all defensive contrast patterns: 先否后肯 + 先肯后否."""
     count = 0
-    # 先否后肯: 不是X，而是Y / 不是X。是Y / 不是X——是Y / 不是X，是Y
+    # 先否后肯: 不是X，而是Y / 不是X。是Y / 不是X——是Y / 不是X，是Y / 不是X，是Y（逗号版）
     count += len(re.findall(r"不是.{0,30}而是", text))
     count += len(re.findall(r"不是.{0,20}[。！]\s*是(?!说|道|问|答|谁|什么|怎么|哪)", text))
     count += len(re.findall(r"不是.{0,20}——\s*是", text))
-    # 先肯后否: 是X，不是Y / 是X。不是Y / X是Y，不是Z
+    count += len(re.findall(r"不是.{0,20}，\s*是(?!说|道|问|答|谁|什么|怎么|哪)", text))
+    # 先肯后否: 是X，不是Y / 是X。不是Y
     count += len(re.findall(r"[。！\s]是.{0,30}不是", text))
     return count
 
@@ -368,10 +369,10 @@ def audit(text: str, beat_label: str = "建立", retry_round: int = 0) -> AuditR
         )
 
     cw = result.chapter_word_count
-    if cw < 2500:
-        result.fatal_violations.append(f"章节字数 {cw} 低于绝对下限 2500")
-    elif cw > 3800:
-        result.fatal_violations.append(f"章节字数 {cw} 超过绝对上限 3800")
+    if cw < 1800:
+        result.fatal_violations.append(f"章节字数 {cw} 低于绝对下限 1800")
+    elif cw > 3200:
+        result.fatal_violations.append(f"章节字数 {cw} 超过绝对上限 3200")
 
     fatal_word_hits = FATAL_WORDS_RE.findall(text)
     if fatal_word_hits:
@@ -457,11 +458,11 @@ def _gen_fix_instruction(violation: str, result: AuditResult) -> str:
     if "数目字密度" in v:
         return f"数目字超标（当前 {result.numeric_count / max(result.chapter_word_count, 1) * 1000:.1f}/千字）：AI测量强迫症。活人不会用量尺感知世界——删掉一半精确数字，只保留最关键的那一两个。剩下的用'一掌宽''半指深''刚好能塞进拳头'这种模糊人体尺度替代。"
     if "章节字数" in v and "低于" in v:
-        shortfall = 2500 - result.chapter_word_count
-        return f"字数不足（差 {shortfall} 字）：不是加水词。在现有场景的物理描写和感官细节上纵向展开——多写一层冰壳的厚度、多写一种气味在鼻腔里的扩散路径、多写一个物体在火光下的阴影形状。每加一处至少 30 字。"
+        shortfall = 1800 - result.chapter_word_count
+        return f"字数不足（差 {shortfall} 字）：不是加水词。检查是否有场景节拍被跳过——中间是否缺了一个物理动作或一句对话的回应。补实不补虚。"
     if "章节字数" in v and "超过" in v:
-        excess = result.chapter_word_count - 3800
-        return f"字数超限（超 {excess} 字）：砍掉重复的感官描写，保留最精确的那一处。两处相似的温度描写留一处，三处类似的痛感留最具体的那个。"
+        excess = result.chapter_word_count - 3200
+        return f"字数超限（超 {excess} 字）：砍重复描写，保留最精确的一处。检查是否有段落可以合并——两段写同一件事的，留一段。"
     if "致命禁词" in v:
         return f"致命禁词：全文搜索并替换这些词——{v.split(':', 1)[1] if ':' in v else v}。这些词属于互联网或现代管理术语，在明末语境中不存在。用物理等价物替代。"
     if "一刀切" in v and ("不是" in v or "是" in v):

@@ -525,7 +525,7 @@ def save_chapter(chapter_num: int, title: str, prose: str, retries: int) -> Path
         f"> 审计通过 / {datetime.now().strftime('%Y-%m-%d %H:%M')} / 驳回 {retries} 次\n\n"
         f"{prose}\n"
     )
-    target = VAULT / f"第{chapter_num:02d}章_{short_title}.md"
+    target = VAULT / f"第{chapter_num:02d}章_{short_title}.txt"
     target.parent.mkdir(parents=True, exist_ok=True)
     with open(target, "w", encoding="utf-8") as fh:
         fh.write(stamped)

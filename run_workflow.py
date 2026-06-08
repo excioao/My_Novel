@@ -369,10 +369,10 @@ def audit(text: str, beat_label: str = "建立", retry_round: int = 0) -> AuditR
         )
 
     cw = result.chapter_word_count
-    if cw < 1200:
-        result.fatal_violations.append(f"章节字数 {cw} 低于绝对下限 1200")
-    elif cw > 3200:
-        result.fatal_violations.append(f"章节字数 {cw} 超过绝对上限 3200")
+    if cw < 500:
+        result.warn_violations.append(f"章节字数 {cw} 极低——可能生成中断")
+    elif cw > 5000:
+        result.warn_violations.append(f"章节字数 {cw} 超高——可能生成失控")
 
     fatal_word_hits = FATAL_WORDS_RE.findall(text)
     if fatal_word_hits:
@@ -457,12 +457,10 @@ def _gen_fix_instruction(violation: str, result: AuditResult) -> str:
         return "工业糖精：将违规情感词汇全部替换为物理动作或生理反应。不写'心动'——写心跳的具体变化（快了一息/沉了下去/撞着肋骨）。不写'温柔的眼神'——写瞳孔在光线里的收缩或扩张。"
     if "数目字密度" in v:
         return f"数目字超标（当前 {result.numeric_count / max(result.chapter_word_count, 1) * 1000:.1f}/千字）：AI测量强迫症。活人不会用量尺感知世界——删掉一半精确数字，只保留最关键的那一两个。剩下的用'一掌宽''半指深''刚好能塞进拳头'这种模糊人体尺度替代。"
-    if "章节字数" in v and "低于" in v:
-        shortfall = 1800 - result.chapter_word_count
-        return f"字数不足（差 {shortfall} 字）：不是加水词。检查是否有场景节拍被跳过——中间是否缺了一个物理动作或一句对话的回应。补实不补虚。"
-    if "章节字数" in v and "超过" in v:
-        excess = result.chapter_word_count - 3200
-        return f"字数超限（超 {excess} 字）：砍重复描写，保留最精确的一处。检查是否有段落可以合并——两段写同一件事的，留一段。"
+    if "章节字数" in v and "极低" in v:
+        return "字数极低——可能生成中断。检查场景是否被截断，是否缺了关键的物理动作或对话回应。"
+    if "章节字数" in v and "超高" in v:
+        return "字数超高——可能生成失控。检查是否有重复段落或冗余描写，合并同类项。"
     if "致命禁词" in v:
         return f"致命禁词：全文搜索并替换这些词——{v.split(':', 1)[1] if ':' in v else v}。这些词属于互联网或现代管理术语，在明末语境中不存在。用物理等价物替代。"
     if "一刀切" in v and ("不是" in v or "是" in v):

@@ -46,7 +46,7 @@ KM_MODEL = os.getenv("KIMI_MODEL", "kimi-k2.5")
 MAX_RETRY = 3
 BASE_CV_THRESHOLD = 0.60
 BASE_NGRAM_LIMIT = 3
-BASE_NUMERIC_MIN = 2
+BASE_NUMERIC_MAX_PER_K = 5  # max numeric measurements per 1000 words (curb AI measuring-everything syndrome)
 
 NGRAM_BLACKLIST = [
     "不仅仅是", "更是要", "可以说", "可谓是", "不难看", "不难发", "由此可", "通过以", "综上所",
@@ -318,19 +318,19 @@ def detect_romance_cliches(text: str) -> list[str]:
     return [f"工业糖精: '{w}' x{c}" for w, c in freq.items()]
 
 
-def get_dynamic_thresholds(retry_round: int) -> tuple[float, int, int]:
+def get_dynamic_thresholds(retry_round: int) -> tuple[float, int]:
     if retry_round == 0:
-        return BASE_CV_THRESHOLD, BASE_NGRAM_LIMIT, BASE_NUMERIC_MIN
+        return BASE_CV_THRESHOLD, BASE_NGRAM_LIMIT
     elif retry_round == 1:
-        return 0.70, 2, 3
+        return 0.70, 2
     elif retry_round == 2:
-        return 0.80, 1, 4
+        return 0.80, 1
     else:
-        return 0.80, 1, 4
+        return 0.80, 1
 
 
 def audit(text: str, beat_label: str = "建立", retry_round: int = 0) -> AuditResult:
-    cv_limit, ngram_limit, numeric_min = get_dynamic_thresholds(retry_round)
+    cv_limit, ngram_limit = get_dynamic_thresholds(retry_round)
     kilo_words = max(count_chapter_words(text), 1) / 1000.0
 
     result = AuditResult()
@@ -362,9 +362,9 @@ def audit(text: str, beat_label: str = "建立", retry_round: int = 0) -> AuditR
     if era_hits:
         result.fatal_violations.append(f"时代错位——现代实验室术语: {', '.join(list(set(h.strip() for h in era_hits))[:5])}")
 
-    if result.numeric_count < numeric_min:
-        result.fatal_violations.append(
-            f"数目字 {result.numeric_count} 个，低于动态下限 {numeric_min}"
+    if result.numeric_count / kilo_words > BASE_NUMERIC_MAX_PER_K:
+        result.warn_violations.append(
+            f"数目字密度 {result.numeric_count / kilo_words:.1f}/千字，超过上限 {BASE_NUMERIC_MAX_PER_K}——AI测量强迫症"
         )
 
     cw = result.chapter_word_count
@@ -413,8 +413,19 @@ def audit(text: str, beat_label: str = "建立", retry_round: int = 0) -> AuditR
     if detect_consecutive_pronouns(text):
         result.warn_violations.append("连续四句以上他/她开头且句长均落20-40字窄带")
 
-    if result.sensory_channels < 2:
-        result.warn_violations.append(f"感官通道仅 {result.sensory_channels} 个")
+    # Sensory overload: 3+ channels in a single paragraph → AI checklist syndrome
+    sensory_overloads = 0
+    for para in re.split(r"\n\n+", text):
+        para_sensory = count_sensory_channels(para)
+        if para_sensory >= 4:
+            sensory_overloads += 1
+    if sensory_overloads >= 3:
+        result.warn_violations.append(f"感官堆砌: {sensory_overloads} 个段落同时塞了4+感官通道——活人不会在同一秒调用全部五感")
+
+    # POV marker density: too many "他看到/他听到/他感觉到" → AI over-filtering
+    pov_markers = len(re.findall(r"[他她]看[到见]|[他她]听[到见]|[他她]感觉[到]|[他她]注意[到]|[他她]发现|[他她]闻到|[他她]摸到", text))
+    if pov_markers / kilo_words > 8:
+        result.warn_violations.append(f"POV标注过度: {pov_markers} 处/千字 {pov_markers/kilo_words:.1f}——每句都挂'他X到'是AI的拐杖")
 
     # River sentences — 150+ char single sentences with only commas, no periods
     sents = [s.strip() for s in re.split(r"[。！？\n]+", text) if s.strip()]
@@ -443,9 +454,8 @@ def _gen_fix_instruction(violation: str, result: AuditResult) -> str:
         return "POV 盲区跨越：找到视点角色不可能知道的那句话，删掉。改为纯外部观察——只写眼睛看到的、耳朵听到的、身体在这一刻感受到的物理信号。"
     if "情感描写违规" in v:
         return "工业糖精：将违规情感词汇全部替换为物理动作或生理反应。不写'心动'——写心跳的具体变化（快了一息/沉了下去/撞着肋骨）。不写'温柔的眼神'——写瞳孔在光线里的收缩或扩张。"
-    if "数目字" in v and "低于" in v:
-        target = result.numeric_count + 2 if result.numeric_count < 2 else 3
-        return f"数目字不足（当前 {result.numeric_count} 个）：在本文关键道具和空间上各给一个精确度量——桌长几尺、棍粗几分、米糊几碗、水渍几寸。目标≥{target} 个。使用明末单位（步/尺/寸/里/丈/石/斤/两/斗/升）。"
+    if "数目字密度" in v:
+        return f"数目字超标（当前 {result.numeric_count / max(result.chapter_word_count, 1) * 1000:.1f}/千字）：AI测量强迫症。活人不会用量尺感知世界——删掉一半精确数字，只保留最关键的那一两个。剩下的用'一掌宽''半指深''刚好能塞进拳头'这种模糊人体尺度替代。"
     if "章节字数" in v and "低于" in v:
         shortfall = 2500 - result.chapter_word_count
         return f"字数不足（差 {shortfall} 字）：不是加水词。在现有场景的物理描写和感官细节上纵向展开——多写一层冰壳的厚度、多写一种气味在鼻腔里的扩散路径、多写一个物体在火光下的阴影形状。每加一处至少 30 字。"
@@ -474,6 +484,12 @@ def _gen_fix_instruction(violation: str, result: AuditResult) -> str:
         return "连续总结尾音：删除段末的'这意味着''由此可见''综上''说明了'等总结触发词。物理事实自己说话——不需要一个旁白来替读者总结。"
     if "连续四句以上" in v and "他/她" in v:
         return "连续代词机械节奏：找到连续'他/她'开头的 4+ 句。把其中 1-2 句的主语改为物（'桌面上的竖痕''砖缝里的冰壳'）或直接省略主语，打破匀速节拍。"
+    if "感官堆砌" in v:
+        return "感官堆砌——AI五感checklist：同一段内不要同时写视觉+触觉+听觉+温度感。活人在同一秒钟只调用一到两个感官。把多余的感官描写分散到不同段落，或者直接删掉最弱的那个。"
+
+    if "POV标注过度" in v:
+        return "POV标注过度——每句都写'他看到''他听到'是AI的拐杖。删掉感知动词，直接写物理事实。不是'他看到冰面反射着光'——是'冰面反射着光'。读者知道视点是谁，不用每句提醒。"
+
     if "感官通道仅" in v:
         missing = ["触觉（冷/热/粗/滑/黏/硬）", "听觉（风声/脚步/金属碰撞/冰裂）", "嗅觉（霉/锈/焦/腥/松脂）", "温度感（体感冷暖/物体温差）"]
         return f"感官通道不足（当前 {result.sensory_channels} 个）：在当前场景的物理空间中，补充至少一种缺失的感官——{', '.join(missing[:2])}。不用多，一处就够。"

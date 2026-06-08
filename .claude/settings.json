@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(mv \"第03章_碎铁入体。视.txt\" \"第03章_碎铁入体.txt\")",
+      "Bash(mv \"第04章_纸上与法上。.txt\" \"第04章_纸上与法上.txt\")",
+      "Bash(mv \"第05章_最后一夜。视.txt\" \"第05章_最后一夜.txt\")",
+      "Bash(mv \"第06章_十息。视点沈.txt\" \"第06章_十息.txt\")",
+      "Bash(mv \"第07章_阵亡录。视点.txt\" \"第07章_阵亡录.txt\")"
     ]
   }
 }

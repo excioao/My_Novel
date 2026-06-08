@@ -669,9 +669,9 @@ async def main_loop(scenes: list[str]) -> None:
 
     try:
         for idx, scene in enumerate(scenes):
-            m = re.match(r"第(\d+)章[——\s]*(.{2,8})", scene)
+            m = re.match(r"第(\d+)章[——\s]+([^。]{1,10})", scene)
             ch_num = int(m.group(1)) if m else idx + 1
-            ch_title = m.group(2).strip()[:6] if m and m.group(2) else f"第{ch_num}章"
+            ch_title = m.group(2).strip() if m and m.group(2) else f"第{ch_num}章"
             bar = "#" * (idx + 1) + "-" * (total - idx - 1) if total > 1 else "#"
             print(f"\n{'='*50}\n[{bar}] 第{ch_num}章 {ch_title} / 共{total}章\n{'='*50}")
             prose, retries = await run_one_scene(ds, km, scene, dir_sys, wrt_sys,
